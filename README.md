@@ -1,6 +1,6 @@
 # kctl
 
-A minimal knowledge extraction and promotion CLI for agent-driven workflows. A companion to [sprintctl](https://github.com/bayleaf/sprintctl).
+A minimal knowledge extraction and promotion CLI for agent-driven workflows. A companion to [sprintctl](https://github.com/bayleafwalker/sprintctl).
 
 **Not a wiki or documentation generator.** kctl recovers durable knowledge — decisions, patterns, resolved blockers, lessons — from sprintctl event streams before it goes stale when sprints close.
 
@@ -22,6 +22,14 @@ Agents working through sprintctl sprints produce valuable context as a side effe
 - sprintctl (optional, for pre-flight integration)
 
 ## Installation
+
+Install globally via [pipx](https://pipx.pypa.io/), not as a project dependency:
+
+```sh
+pipx install git+https://github.com/bayleafwalker/kctl.git
+```
+
+For local development:
 
 ```sh
 pip install -e .
@@ -123,6 +131,8 @@ pipx install kctl
 
 For Nix-based setups, a flake is planned alongside sprintctl's. Until then, `pipx` is the canonical method.
 
+For setup instructions covering both tools together — including the direnv template — see [sprintctl's CONTRIBUTING.md](https://github.com/bayleafwalker/sprintctl/blob/main/CONTRIBUTING.md). An [envrc.example](https://github.com/bayleafwalker/sprintctl/blob/main/envrc.example) lives in the sprintctl repo and covers both `SPRINTCTL_DB` and `KCTL_DB`.
+
 ### Per-project database paths
 
 Each project should scope both databases to its working directory. Add to `.envrc`:
@@ -154,7 +164,7 @@ This mirrors the sprintctl pattern: local databases are transient working state,
 
 ## Multi-contributor workflows
 
-kctl follows the same local-DB-per-contributor model as sprintctl. See the [sprintctl README — Multi-contributor workflows](https://github.com/bayleaf/sprintctl#multi-contributor-workflows) for the full rationale.
+kctl follows the same local-DB-per-contributor model as sprintctl. See the [sprintctl README — Multi-contributor workflows](https://github.com/bayleafwalker/sprintctl#multi-contributor-workflows) for the full rationale.
 
 The short version applied to kctl:
 
