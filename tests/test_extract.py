@@ -1,0 +1,212 @@
+import json
+
+import pytest
+
+from kctl import db as _db
+from kctl import extract as _extract
+from kctl.extract import build_candidate, extract_candidates
+from tests.conftest import add_event
+
+NOW = "2026-03-26T10:00:00Z"
+
+
+# ---------------------------------------------------------------------------
+# build_candidate
+# ---------------------------------------------------------------------------
+
+def test_build_candidate_full_payload():
+    event = {
+        "id": 1,
+        "sprint_id": 1,
+        "work_item_id": 1,
+        "event_type": "decision",
+        "payload": json.dumps({
+            "summary": "Use RS256",
+            "detail": "Symmetric HMAC breaks across services",
+            "tags": ["auth", "architecture"],
+            "confidence": "high",
+        }),
+        "item_title": "Implement auth",
+        "track_name": "backend",
+    }
+    c = build_candidate(event, NOW)
+    assert c["summary"] == "Use RS256"
+    assert c["detail"] == "Symmetric HMAC breaks across services"
+    assert json.loads(c["tags"]) == ["auth", "architecture"]
+    assert c["confidence"] == "high"
+    assert c["source_event_id"] == 1
+    assert c["extracted_at"] == NOW
+
+
+def test_build_candidate_empty_payload():
+    event = {
+        "id": 2,
+        "sprint_id": 1,
+        "work_item_id": 1,
+        "event_type": "lesson-learned",
+        "payload": "{}",
+        "item_title": "Fix deploy",
+        "track_name": "infra",
+    }
+    c = build_candidate(event, NOW)
+    assert c["summary"] == "lesson-learned: Fix deploy"
+    assert json.loads(c["tags"]) == []
+    assert c["confidence"] is None
+
+
+def test_build_candidate_no_item():
+    event = {
+        "id": 3,
+        "sprint_id": 1,
+        "work_item_id": None,
+        "event_type": "pattern-noted",
+        "payload": None,
+        "item_title": None,
+        "track_name": None,
+    }
+    c = build_candidate(event, NOW)
+    assert c["summary"] == "pattern-noted: no item"
+
+
+def test_build_candidate_invalid_payload_json():
+    event = {
+        "id": 4,
+        "sprint_id": 1,
+        "work_item_id": None,
+        "event_type": "decision",
+        "payload": "not valid json",
+        "item_title": "Some task",
+        "track_name": None,
+    }
+    c = build_candidate(event, NOW)
+    assert c["summary"] == "decision: Some task"
+
+
+# ---------------------------------------------------------------------------
+# extract_candidates — integration against fixture sprintctl DB
+# ---------------------------------------------------------------------------
+
+def test_extract_creates_candidates(sc_db_path, kctl_conn):
+    add_event(sc_db_path, "decision", {"summary": "Use WAL mode", "tags": ["db"]})
+    add_event(sc_db_path, "pattern-noted", {"summary": "Cache at edge"})
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    _db.validate_sprintctl_schema(sc_conn)
+
+    created = extract_candidates(
+        sprintctl_conn=sc_conn,
+        kctl_conn=kctl_conn,
+        sprintctl_db_path=str(sc_db_path),
+        event_types=_extract.DEFAULT_EVENT_TYPES,
+        since_event_id=0,
+        sprint_id=None,
+        now=NOW,
+    )
+    sc_conn.close()
+
+    assert len(created) == 2
+    summaries = {c["summary"] for c in created}
+    assert "Use WAL mode" in summaries
+    assert "Cache at edge" in summaries
+
+
+def test_extract_ignores_non_target_events(sc_db_path, kctl_conn):
+    add_event(sc_db_path, "status-update", {"summary": "Nothing special"})
+    add_event(sc_db_path, "decision", {"summary": "Keep it"})
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    created = extract_candidates(
+        sprintctl_conn=sc_conn,
+        kctl_conn=kctl_conn,
+        sprintctl_db_path=str(sc_db_path),
+        event_types=_extract.DEFAULT_EVENT_TYPES,
+        since_event_id=0,
+        sprint_id=None,
+        now=NOW,
+    )
+    sc_conn.close()
+
+    assert len(created) == 1
+    assert created[0]["summary"] == "Keep it"
+
+
+def test_extract_is_idempotent(sc_db_path, kctl_conn):
+    add_event(sc_db_path, "decision", {"summary": "Auth decision"})
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    created_first = extract_candidates(
+        sc_conn, kctl_conn, str(sc_db_path),
+        _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
+    )
+    sc_conn.close()
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    created_second = extract_candidates(
+        sc_conn, kctl_conn, str(sc_db_path),
+        _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
+    )
+    sc_conn.close()
+
+    assert len(created_first) == 1
+    assert len(created_second) == 0  # duplicate skipped
+
+
+def test_extract_incremental(sc_db_path, kctl_conn):
+    eid1 = add_event(sc_db_path, "decision", {"summary": "First"})
+    eid2 = add_event(sc_db_path, "blocker-resolved", {"summary": "Second"})
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    # Only extract events after eid1
+    created = extract_candidates(
+        sc_conn, kctl_conn, str(sc_db_path),
+        _extract.DEFAULT_EVENT_TYPES, since_event_id=eid1, sprint_id=None, now=NOW,
+    )
+    sc_conn.close()
+
+    assert len(created) == 1
+    assert created[0]["summary"] == "Second"
+
+
+def test_extract_updates_extractor_state(sc_db_path, kctl_conn):
+    add_event(sc_db_path, "decision", {"summary": "State test"})
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(
+        sc_conn, kctl_conn, str(sc_db_path),
+        _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
+    )
+    sc_conn.close()
+
+    state = _db.get_extractor_state(kctl_conn, str(sc_db_path))
+    assert state is not None
+    assert state["last_event_id"] > 0
+    assert state["last_run_at"] == NOW
+
+
+def test_extract_sprint_filter(sc_db_path, kctl_conn, sc_conn):
+    # Add a second sprint and events for each
+    sc_conn2 = sqlite3.connect(str(sc_db_path))
+    sc_conn2.execute(
+        "INSERT INTO sprint (id, name, goal, start_date, end_date, status) VALUES (2,'S2','',?,?,'planned')",
+        ("2026-04-01", "2026-04-30"),
+    )
+    sc_conn2.execute(
+        "INSERT INTO event (sprint_id, work_item_id, event_type, payload) VALUES (2, NULL, 'decision', ?)",
+        ('{"summary": "Sprint 2 decision"}',),
+    )
+    sc_conn2.commit()
+    sc_conn2.close()
+
+    add_event(sc_db_path, "decision", {"summary": "Sprint 1 decision"}, sprint_id=1)
+
+    sc_conn3 = _db.get_sprintctl_connection(sc_db_path)
+    created = extract_candidates(
+        sc_conn3, kctl_conn, str(sc_db_path),
+        _extract.DEFAULT_EVENT_TYPES, 0, sprint_id=1, now=NOW,
+    )
+    sc_conn3.close()
+
+    assert all(c["source_sprint_id"] == 1 for c in created)
+
+
+import sqlite3  # noqa: E402 (placed here for the inline helper above)
