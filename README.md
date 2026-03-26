@@ -113,6 +113,57 @@ sprintctl (owns)          kctl (reads)
 
 kctl never writes to sprintctl's database. sprintctl has no runtime dependency on kctl.
 
+## Integration into projects
+
+kctl is developer tooling, not an application dependency. Install it globally via [pipx](https://pipx.pypa.io/):
+
+```sh
+pipx install kctl
+```
+
+For Nix-based setups, a flake is planned alongside sprintctl's. Until then, `pipx` is the canonical method.
+
+### Per-project database paths
+
+Each project should scope both databases to its working directory. Add to `.envrc`:
+
+```sh
+export SPRINTCTL_DB="$PWD/.sprintctl/sprintctl.db"
+export KCTL_DB="$PWD/.kctl/kctl.db"
+```
+
+### .gitignore
+
+Add `.kctl/` alongside `.sprintctl/`:
+
+```gitignore
+.sprintctl/
+.kctl/
+```
+
+### Committed artifact
+
+The output of `kctl review list --status approved` is the shareable artifact — commit it as `knowledge.md` (or similar) alongside the sprint render:
+
+```sh
+kctl review list --status approved > knowledge.md
+git add knowledge.md sprint.md
+```
+
+This mirrors the sprintctl pattern: local databases are transient working state, committed markdown is the shared record.
+
+## Multi-contributor workflows
+
+kctl follows the same local-DB-per-contributor model as sprintctl. See the [sprintctl README — Multi-contributor workflows](https://github.com/bayleaf/sprintctl#multi-contributor-workflows) for the full rationale.
+
+The short version applied to kctl:
+
+- Each contributor runs `kctl extract` against their own sprintctl database, so extraction is naturally scoped to your events — not someone else's.
+- Approved knowledge entries converge through git when committed as `knowledge.md`. No special coordination is needed; git merge handles the text files.
+- Contributor A's approved entries and contributor B's approved entries are independent until both are committed and merged. That's the intended model.
+
+The repo is the integration layer. Local kctl databases are not shared or replicated.
+
 ## Development
 
 ```sh
