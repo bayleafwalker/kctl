@@ -142,12 +142,30 @@ def review_group() -> None:
 )
 @click.option("--tag", default=None, help="Filter by tag")
 @click.option("--sprint-id", type=int, default=None, help="Filter by source sprint ID")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def review_list(obj, status, tag, sprint_id) -> None:
+def review_list(obj, status, tag, sprint_id, output_json) -> None:
     """List candidates."""
     conn = obj["conn"]
     effective_status = None if status == "all" else status
     candidates = _db.list_candidates(conn, status=effective_status, tag=tag, sprint_id=sprint_id)
+
+    if output_json:
+        rows = [
+            {
+                "id": c["id"],
+                "status": c["status"],
+                "event_type": c["event_type"],
+                "summary": c["summary"],
+                "tags": json.loads(c.get("tags") or "[]"),
+                "source_sprint_id": c["source_sprint_id"],
+                "source_track": c.get("source_track"),
+                "confidence": c.get("confidence"),
+            }
+            for c in candidates
+        ]
+        click.echo(json.dumps(rows))
+        return
 
     if not candidates:
         click.echo("No candidates found.")
@@ -288,7 +306,7 @@ def render_cmd(obj, category, tag, sprint_id, output) -> None:
     conn = obj["conn"]
     entries = _db.list_entries(conn, category=category, tag=tag, sprint_id=sprint_id)
 
-    project = os.environ.get("KCTL_PROJECT", "project")
+    project = os.environ.get("KCTL_PROJECT", "homelab-analytics")
     lines = [
         f"# Knowledge Base — {project}",
         f"Generated: {_now()}",
@@ -339,14 +357,31 @@ def render_cmd(obj, category, tag, sprint_id, output) -> None:
 
 @cli.command("status")
 @click.option("--sprint-id", type=int, default=None, help="Filter to one sprint")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def status_cmd(obj, sprint_id) -> None:
+def status_cmd(obj, sprint_id, output_json) -> None:
     """Show pipeline state: candidates awaiting review, approved, published."""
     conn = obj["conn"]
 
     pending = _db.list_candidates(conn, status="candidate", sprint_id=sprint_id)
     approved = _db.list_candidates(conn, status="approved", sprint_id=sprint_id)
     published = _db.list_candidates(conn, status="published", sprint_id=sprint_id)
+
+    if output_json:
+        payload = {
+            "sprint_id": sprint_id,
+            "counts": {
+                "candidate": len(pending),
+                "approved": len(approved),
+                "published": len(published),
+            },
+            "approved": [
+                {"id": c["id"], "summary": c["summary"], "event_type": c["event_type"]}
+                for c in approved
+            ],
+        }
+        click.echo(json.dumps(payload))
+        return
 
     scope = f" (sprint {sprint_id})" if sprint_id else ""
     click.echo(f"Pipeline status{scope}:")

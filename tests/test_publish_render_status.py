@@ -205,6 +205,13 @@ def test_cli_render_outputs_markdown(sc_db_path, kctl_conn, runner):
     assert "RS256 is better." in result.output
 
 
+def test_cli_render_uses_default_project_name(runner):
+    """KCTL_PROJECT defaults to 'homelab-analytics', not 'project'."""
+    result = runner.invoke(cli, ["render"])
+    assert result.exit_code == 0
+    assert "homelab-analytics" in result.output
+
+
 def test_cli_render_empty(runner):
     result = runner.invoke(cli, ["render"])
     assert result.exit_code == 0
@@ -248,6 +255,52 @@ def test_cli_status_sprint_filter(sc_db_path, kctl_conn, runner):
     result = runner.invoke(cli, ["status", "--sprint-id", "1"])
     assert result.exit_code == 0
     assert "sprint 1" in result.output
+
+
+def test_cli_status_json_output(sc_db_path, kctl_conn, runner):
+    """--json emits valid JSON with counts and approved list."""
+    cid = _seed_approved(sc_db_path, kctl_conn, "Approved for JSON")
+    result = runner.invoke(cli, ["status", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert "counts" in data
+    assert data["counts"]["approved"] == 1
+    assert data["counts"]["candidate"] == 0
+    assert any(a["id"] == cid for a in data["approved"])
+    assert data["sprint_id"] is None
+
+
+def test_cli_status_json_sprint_filter(sc_db_path, kctl_conn, runner):
+    """--json with --sprint-id scopes counts and sets sprint_id field."""
+    _seed_approved(sc_db_path, kctl_conn, "Sprint JSON entry")
+    result = runner.invoke(cli, ["status", "--sprint-id", "1", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["sprint_id"] == 1
+
+
+def test_cli_review_list_json_output(sc_db_path, kctl_conn, runner):
+    """review list --json emits a JSON array of candidates."""
+    add_event(sc_db_path, "decision", {"summary": "JSON candidate", "tags": ["auth"]})
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+
+    result = runner.invoke(cli, ["review", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)
+    assert isinstance(rows, list)
+    assert len(rows) == 1
+    assert rows[0]["summary"] == "JSON candidate"
+    assert rows[0]["status"] == "candidate"
+    assert rows[0]["tags"] == ["auth"]
+
+
+def test_cli_review_list_json_empty(runner):
+    """review list --json returns empty array when no candidates."""
+    result = runner.invoke(cli, ["review", "list", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output) == []
 
 
 # ---------------------------------------------------------------------------
