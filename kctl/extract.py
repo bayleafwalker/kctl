@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from datetime import timedelta, timezone
 from pathlib import Path
 
 from . import db as _db
@@ -129,17 +130,30 @@ def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
     warnings: list[str] = []
 
     try:
+        from datetime import datetime as _datetime
         from sprintctl import db as sc_db  # type: ignore[import]
         from sprintctl import calc as sc_calc  # type: ignore[import]
+        from sprintctl import maintain as sc_maintain  # type: ignore[import]
 
+        _threshold = sc_maintain._stale_threshold()
+        _now = _datetime.now(timezone.utc)
         sprints = sc_db.list_sprints(sprintctl_conn)
         for sprint in sprints:
             if sprint.get("status") == "active":
                 items = sc_db.list_work_items(sprintctl_conn, sprint_id=sprint["id"])
-                stale = [i for i in items if sc_calc.is_stale(i)]
+                stale = [
+                    i for i in items
+                    if sc_calc.item_staleness(i, _now, _threshold)["is_stale"]
+                ]
                 if stale:
+                    _hrs = _threshold.total_seconds() / 3600
+                    _label = (
+                        f"{int(_hrs)} hours" if _hrs == int(_hrs)
+                        else f"{_hrs:.1f} hours"
+                    )
                     warnings.append(
-                        f"Sprint '{sprint['name']}' has {len(stale)} stale item(s)"
+                        f"Sprint '{sprint['name']}' has {len(stale)} stale item(s) "
+                        f"(no activity in last {_label})"
                     )
         return warnings
     except ImportError:
@@ -147,28 +161,34 @@ def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
 
     # Subprocess fallback removed: sprintctl maintain check --json is not yet implemented.
     # Instead replicate the stale-item check directly against the sprintctl DB.
+    _raw = os.environ.get("SPRINTCTL_STALE_THRESHOLD")
+    _stale_threshold = timedelta(hours=float(_raw)) if _raw else timedelta(hours=4)
+    _threshold_sql = f"-{int(_stale_threshold.total_seconds())} seconds"
+    _threshold_label = (
+        f"{int(_stale_threshold.total_seconds() / 3600)} hours"
+        if _stale_threshold.total_seconds() % 3600 == 0
+        else f"{_stale_threshold.total_seconds() / 3600:.1f} hours"
+    )
     try:
         active_sprints = sprintctl_conn.execute(
             "SELECT id, name FROM sprint WHERE status = 'active'"
         ).fetchall()
         for sprint in active_sprints:
+            # Mirror sprintctl calc.item_staleness: active items idle > threshold are stale.
+            # pending/done/blocked items are never stale (matches sprintctl default behaviour).
             stale_count = sprintctl_conn.execute(
                 """
                 SELECT COUNT(*) FROM work_item
                 WHERE sprint_id = ?
-                  AND status NOT IN ('done', 'cancelled')
-                  AND (
-                      SELECT COUNT(*) FROM event
-                      WHERE work_item_id = work_item.id
-                        AND created_at >= datetime('now', '-3 days')
-                  ) = 0
+                  AND status = 'active'
+                  AND updated_at < datetime('now', ?)
                 """,
-                (sprint["id"],),
+                (sprint["id"], _threshold_sql),
             ).fetchone()[0]
             if stale_count:
                 warnings.append(
                     f"Sprint '{sprint['name']}' has {stale_count} stale item(s) "
-                    "(no activity in last 3 days)"
+                    f"(no activity in last {_threshold_label})"
                 )
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"Preflight check failed: {exc}")

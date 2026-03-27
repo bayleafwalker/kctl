@@ -311,7 +311,9 @@ def update_extractor_state(
 
 REQUIRED_SPRINTCTL_TABLES = {"sprint", "track", "work_item", "event"}
 REQUIRED_EVENT_COLUMNS = {"id", "sprint_id", "work_item_id", "event_type", "payload", "created_at"}
-REQUIRED_WORK_ITEM_COLUMNS = {"id", "title", "track_id"}
+REQUIRED_WORK_ITEM_COLUMNS = {"id", "title", "track_id", "status", "updated_at"}
+# Statuses kctl depends on — preflight query and staleness logic both reference these.
+REQUIRED_WORK_ITEM_STATUSES = {"pending", "active", "done", "blocked"}
 
 
 def validate_sprintctl_schema(sprintctl_conn: sqlite3.Connection) -> None:
@@ -348,5 +350,19 @@ def validate_sprintctl_schema(sprintctl_conn: sqlite3.Connection) -> None:
     if missing_wi_cols:
         raise ValueError(
             f"sprintctl DB schema mismatch — work_item table missing columns: {', '.join(sorted(missing_wi_cols))}. "
+            "Check that sprintctl is up to date."
+        )
+
+    # Verify the work_item CHECK constraint covers all status values kctl depends on.
+    # Reads the DDL from sqlite_master — no write access required.
+    ddl_row = sprintctl_conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='work_item'"
+    ).fetchone()
+    ddl = ddl_row[0] if ddl_row else ""
+    missing_statuses = {s for s in REQUIRED_WORK_ITEM_STATUSES if f"'{s}'" not in ddl}
+    if missing_statuses:
+        raise ValueError(
+            f"sprintctl DB schema mismatch — work_item.status CHECK constraint missing "
+            f"expected values: {', '.join(sorted(missing_statuses))}. "
             "Check that sprintctl is up to date."
         )

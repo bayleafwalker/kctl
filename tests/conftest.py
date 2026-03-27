@@ -53,12 +53,14 @@ def _init_sprintctl_schema(conn: sqlite3.Connection) -> None:
             description TEXT  NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS work_item (
-            id        INTEGER PRIMARY KEY AUTOINCREMENT,
-            track_id  INTEGER NOT NULL,
-            sprint_id INTEGER NOT NULL,
-            title     TEXT    NOT NULL,
-            status    TEXT    NOT NULL DEFAULT 'pending',
-            assignee  TEXT
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id   INTEGER NOT NULL,
+            sprint_id  INTEGER NOT NULL,
+            title      TEXT    NOT NULL,
+            status     TEXT    NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending', 'active', 'done', 'blocked')),
+            assignee   TEXT,
+            updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
         );
         CREATE TABLE IF NOT EXISTS event (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
