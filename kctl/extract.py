@@ -21,7 +21,12 @@ def get_sprintctl_db_path() -> Path:
     return Path.home() / ".sprintctl" / "sprintctl.db"
 
 
-def build_candidate(event: dict, extracted_at: str) -> dict:
+def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
+    """
+    Build a candidate dict from a sprintctl event.
+    Returns (candidate, has_structured_payload) where has_structured_payload is True
+    when the event carried a non-empty JSON object with at least a 'summary' key.
+    """
     raw_payload = event["payload"] if event["payload"] else "{}"
     try:
         payload = json.loads(raw_payload)
@@ -30,6 +35,8 @@ def build_candidate(event: dict, extracted_at: str) -> dict:
     except (json.JSONDecodeError, TypeError):
         payload = {}
 
+    has_structured_payload = bool(payload.get("summary"))
+
     item_title = event["item_title"] if event["item_title"] else "no item"
     summary = payload.get("summary") or f'{event["event_type"]}: {item_title}'
 
@@ -37,7 +44,7 @@ def build_candidate(event: dict, extracted_at: str) -> dict:
     if not isinstance(tags, list):
         tags = []
 
-    return {
+    candidate = {
         "source_event_id": event["id"],
         "source_sprint_id": event["sprint_id"],
         "source_item_id": event["work_item_id"],
@@ -48,6 +55,7 @@ def build_candidate(event: dict, extracted_at: str) -> dict:
         "confidence": payload.get("confidence"),
         "extracted_at": extracted_at,
     }
+    return candidate, has_structured_payload
 
 
 def extract_candidates(
@@ -58,10 +66,11 @@ def extract_candidates(
     since_event_id: int,
     sprint_id: int | None,
     now: str,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
     """
     Scan sprintctl events for knowledge-bearing entries.
-    Returns list of newly created candidates (skips duplicates).
+    Returns (created_candidates, structured_count) where structured_count is how many
+    of the new candidates had a structured payload (vs. bare defaults).
     Idempotent: UNIQUE constraint on source_event_id prevents double-insertion.
     """
     placeholders = ",".join("?" * len(event_types))
@@ -89,6 +98,7 @@ def extract_candidates(
     events = sprintctl_conn.execute(query, params).fetchall()
 
     created = []
+    structured_count = 0
     max_event_id = since_event_id
 
     for ev in events:
@@ -98,15 +108,17 @@ def extract_candidates(
                 max_event_id = ev_dict["id"]
             continue
 
-        candidate = build_candidate(ev_dict, now)
+        candidate, has_structured = build_candidate(ev_dict, now)
         _db.insert_candidate(kctl_conn, candidate)
         created.append(candidate)
+        if has_structured:
+            structured_count += 1
 
         if ev_dict["id"] > max_event_id:
             max_event_id = ev_dict["id"]
 
     _db.update_extractor_state(kctl_conn, sprintctl_db_path, max_event_id, now)
-    return created
+    return created, structured_count
 
 
 def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
@@ -135,19 +147,32 @@ def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
     except ImportError:
         pass
 
-    # Subprocess fallback
-    import subprocess
+    # Subprocess fallback removed: sprintctl maintain check --json is not yet implemented.
+    # Instead replicate the stale-item check directly against the sprintctl DB.
     try:
-        result = subprocess.run(
-            ["sprintctl", "maintain", "check", "--json"],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode != 0:
-            warnings.append(f"sprintctl maintain check failed: {result.stderr.strip()}")
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        warnings.append(
-            "Could not run sprintctl maintain check — sprintctl not found in PATH. "
-            "Proceeding with extraction."
-        )
+        active_sprints = sprintctl_conn.execute(
+            "SELECT id, name FROM sprint WHERE status = 'active'"
+        ).fetchall()
+        for sprint in active_sprints:
+            stale_count = sprintctl_conn.execute(
+                """
+                SELECT COUNT(*) FROM work_item
+                WHERE sprint_id = ?
+                  AND status NOT IN ('done', 'cancelled')
+                  AND (
+                      SELECT COUNT(*) FROM event
+                      WHERE work_item_id = work_item.id
+                        AND created_at >= datetime('now', '-3 days')
+                  ) = 0
+                """,
+                (sprint["id"],),
+            ).fetchone()[0]
+            if stale_count:
+                warnings.append(
+                    f"Sprint '{sprint['name']}' has {stale_count} stale item(s) "
+                    "(no activity in last 3 days)"
+                )
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"Preflight check failed: {exc}")
 
     return warnings

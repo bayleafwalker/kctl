@@ -14,7 +14,7 @@ NOW2 = "2026-03-26T11:00:00Z"
 def _seed_candidate(sc_db_path, kctl_conn, summary="Test decision") -> int:
     add_event(sc_db_path, "decision", {"summary": summary})
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)  # tuple return ignored
     sc_conn.close()
     candidates = _db.list_candidates(kctl_conn, status="candidate")
     return candidates[-1]["id"]
@@ -119,7 +119,7 @@ def test_list_candidates_tag_filter(sc_db_path, kctl_conn):
     add_event(sc_db_path, "decision", {"summary": "Auth decision", "tags": ["auth", "security"]})
     add_event(sc_db_path, "decision", {"summary": "DB decision", "tags": ["database"]})
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)  # tuple return ignored
     sc_conn.close()
 
     auth_tagged = _db.list_candidates(kctl_conn, status="candidate", tag="auth")

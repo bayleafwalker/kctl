@@ -224,6 +224,67 @@ def transition_candidate(
     return get_candidate(conn, candidate_id)
 
 
+# --- KnowledgeEntry ---
+
+def insert_entry(conn: sqlite3.Connection, entry: dict) -> int:
+    cur = conn.execute(
+        """
+        INSERT INTO knowledge_entry
+            (candidate_id, title, body, tags, category, source_sprint, source_track, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            entry["candidate_id"],
+            entry["title"],
+            entry["body"],
+            entry.get("tags", "[]"),
+            entry["category"],
+            entry["source_sprint"],
+            entry.get("source_track"),
+            entry["created_at"],
+        ),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_entry(conn: sqlite3.Connection, entry_id: int) -> dict | None:
+    row = conn.execute(
+        "SELECT * FROM knowledge_entry WHERE id = ?", (entry_id,)
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_entries(
+    conn: sqlite3.Connection,
+    category: str | None = None,
+    tag: str | None = None,
+    sprint_id: int | None = None,
+) -> list[dict]:
+    where_clauses = []
+    params: list = []
+
+    if category is not None:
+        where_clauses.append("category = ?")
+        params.append(category)
+    if sprint_id is not None:
+        where_clauses.append("source_sprint = ?")
+        params.append(str(sprint_id))
+
+    query = "SELECT * FROM knowledge_entry"
+    if where_clauses:
+        query += " WHERE " + " AND ".join(where_clauses)
+    query += " ORDER BY created_at DESC"
+
+    rows = conn.execute(query, params).fetchall()
+    results = [dict(r) for r in rows]
+
+    if tag is not None:
+        results = [r for r in results if tag in json.loads(r.get("tags") or "[]")]
+
+    return results
+
+
 # --- ExtractorState ---
 
 def get_extractor_state(conn: sqlite3.Connection, sprintctl_db_path: str) -> dict | None:

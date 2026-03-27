@@ -8,6 +8,7 @@ import click
 
 from . import db as _db
 from . import extract as _extract
+from . import publish as _publish
 from . import review as _review
 
 
@@ -97,7 +98,7 @@ def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, no_preflight) -
     state = _db.get_extractor_state(kctl_conn, str(sc_db_path))
     since_event_id = 0 if full or state is None else state["last_event_id"]
 
-    created = _extract.extract_candidates(
+    created, structured_count = _extract.extract_candidates(
         sprintctl_conn=sc_conn,
         kctl_conn=kctl_conn,
         sprintctl_db_path=str(sc_db_path),
@@ -108,7 +109,17 @@ def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, no_preflight) -
     )
     sc_conn.close()
 
-    click.echo(f"Extracted {len(created)} new candidate(s).")
+    total = len(created)
+    bare_count = total - structured_count
+    if total == 0:
+        click.echo("Extracted 0 new candidates.")
+    elif bare_count == 0:
+        click.echo(f"Extracted {total} candidate(s) ({structured_count} with structured payloads).")
+    else:
+        click.echo(
+            f"Extracted {total} candidate(s) "
+            f"({structured_count} with structured payloads, {bare_count} from bare event)."
+        )
     pending = len(_db.list_candidates(kctl_conn, status="candidate"))
     click.echo(f"{pending} candidate(s) awaiting review.")
 
@@ -215,6 +226,138 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
         sys.exit(1)
 
     click.echo(f"Candidate #{candidate_id} rejected.")
+
+
+# ---------------------------------------------------------------------------
+# publish
+# ---------------------------------------------------------------------------
+
+@cli.command("publish")
+@click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID to publish")
+@click.option("--title", default=None, help="Entry title (defaults to candidate summary)")
+@click.option("--body", required=True, help="Full knowledge body / detail text")
+@click.option(
+    "--category",
+    required=True,
+    type=click.Choice(["decision", "pattern", "lesson", "risk", "reference"]),
+    help="Knowledge category",
+)
+@click.option("--tags", default=None, help='Tags as JSON array, e.g. \'["auth","lessons"]\'')
+@click.pass_obj
+def publish_cmd(obj, candidate_id, title, body, category, tags) -> None:
+    """Promote an approved candidate to a knowledge entry."""
+    conn = obj["conn"]
+    try:
+        entry = _publish.publish_candidate(
+            conn,
+            candidate_id=candidate_id,
+            title=title,
+            body=body,
+            category=category,
+            tags=tags,
+            now=_now(),
+        )
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+
+    click.echo(f"Published entry #{entry['id']}: {entry['title']}")
+    click.echo(f"  Category: {entry['category']}")
+    tags_str = _format_tags(entry.get("tags"))
+    if tags_str:
+        click.echo(f"  Tags: {tags_str}")
+
+
+# ---------------------------------------------------------------------------
+# render
+# ---------------------------------------------------------------------------
+
+@cli.command("render")
+@click.option(
+    "--category",
+    default=None,
+    type=click.Choice(["decision", "pattern", "lesson", "risk", "reference"]),
+    help="Filter by category",
+)
+@click.option("--tag", default=None, help="Filter by tag")
+@click.option("--sprint-id", type=int, default=None, help="Filter by source sprint ID")
+@click.option("--output", default=None, help="Write to FILE instead of stdout")
+@click.pass_obj
+def render_cmd(obj, category, tag, sprint_id, output) -> None:
+    """Render published knowledge entries to structured markdown."""
+    conn = obj["conn"]
+    entries = _db.list_entries(conn, category=category, tag=tag, sprint_id=sprint_id)
+
+    lines = [
+        "# Knowledge Base — homelab-analytics",
+        f"Generated: {_now()}",
+        "",
+    ]
+
+    if not entries:
+        lines.append("_No published entries found._")
+    else:
+        # Group by category
+        by_category: dict[str, list[dict]] = {}
+        for e in entries:
+            by_category.setdefault(e["category"], []).append(e)
+
+        category_order = ["decision", "pattern", "lesson", "risk", "reference"]
+        for cat in category_order:
+            if cat not in by_category:
+                continue
+            lines.append(f"## {cat.capitalize()}s")
+            lines.append("")
+            for e in by_category[cat]:
+                lines.append(f"### {e['title']}")
+                lines.append(f"Source: Sprint {e['source_sprint']}" +
+                              (f", track {e['source_track']}" if e.get("source_track") else ""))
+                tags_str = _format_tags(e.get("tags"))
+                if tags_str:
+                    lines.append(f"Tags: {tags_str}")
+                lines.append("")
+                lines.append(e["body"])
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+
+    content = "\n".join(lines)
+
+    if output:
+        out_path = Path(output)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        click.echo(f"Wrote {len(entries)} entry/entries to {output}")
+    else:
+        click.echo(content)
+
+
+# ---------------------------------------------------------------------------
+# status
+# ---------------------------------------------------------------------------
+
+@cli.command("status")
+@click.option("--sprint-id", type=int, default=None, help="Filter to one sprint")
+@click.pass_obj
+def status_cmd(obj, sprint_id) -> None:
+    """Show pipeline state: candidates awaiting review, approved, published."""
+    conn = obj["conn"]
+
+    pending = _db.list_candidates(conn, status="candidate", sprint_id=sprint_id)
+    approved = _db.list_candidates(conn, status="approved", sprint_id=sprint_id)
+    published = _db.list_candidates(conn, status="published", sprint_id=sprint_id)
+
+    scope = f" (sprint {sprint_id})" if sprint_id else ""
+    click.echo(f"Pipeline status{scope}:")
+    click.echo(f"  {len(pending):>4}  awaiting review  (candidate)")
+    click.echo(f"  {len(approved):>4}  approved, pending publish")
+    click.echo(f"  {len(published):>4}  published")
+
+    if approved:
+        click.echo("")
+        click.echo("Approved (ready to publish):")
+        for c in approved:
+            click.echo(f"  #{c['id']:>4}  {c['summary']}")
 
 
 # ---------------------------------------------------------------------------

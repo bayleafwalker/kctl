@@ -29,13 +29,14 @@ def test_build_candidate_full_payload():
         "item_title": "Implement auth",
         "track_name": "backend",
     }
-    c = build_candidate(event, NOW)
+    c, structured = build_candidate(event, NOW)
     assert c["summary"] == "Use RS256"
     assert c["detail"] == "Symmetric HMAC breaks across services"
     assert json.loads(c["tags"]) == ["auth", "architecture"]
     assert c["confidence"] == "high"
     assert c["source_event_id"] == 1
     assert c["extracted_at"] == NOW
+    assert structured is True
 
 
 def test_build_candidate_empty_payload():
@@ -48,10 +49,11 @@ def test_build_candidate_empty_payload():
         "item_title": "Fix deploy",
         "track_name": "infra",
     }
-    c = build_candidate(event, NOW)
+    c, structured = build_candidate(event, NOW)
     assert c["summary"] == "lesson-learned: Fix deploy"
     assert json.loads(c["tags"]) == []
     assert c["confidence"] is None
+    assert structured is False
 
 
 def test_build_candidate_no_item():
@@ -64,8 +66,9 @@ def test_build_candidate_no_item():
         "item_title": None,
         "track_name": None,
     }
-    c = build_candidate(event, NOW)
+    c, structured = build_candidate(event, NOW)
     assert c["summary"] == "pattern-noted: no item"
+    assert structured is False
 
 
 def test_build_candidate_invalid_payload_json():
@@ -78,8 +81,9 @@ def test_build_candidate_invalid_payload_json():
         "item_title": "Some task",
         "track_name": None,
     }
-    c = build_candidate(event, NOW)
+    c, structured = build_candidate(event, NOW)
     assert c["summary"] == "decision: Some task"
+    assert structured is False
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ def test_extract_creates_candidates(sc_db_path, kctl_conn):
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
     _db.validate_sprintctl_schema(sc_conn)
 
-    created = extract_candidates(
+    created, structured_count = extract_candidates(
         sprintctl_conn=sc_conn,
         kctl_conn=kctl_conn,
         sprintctl_db_path=str(sc_db_path),
@@ -105,6 +109,7 @@ def test_extract_creates_candidates(sc_db_path, kctl_conn):
     sc_conn.close()
 
     assert len(created) == 2
+    assert structured_count == 2
     summaries = {c["summary"] for c in created}
     assert "Use WAL mode" in summaries
     assert "Cache at edge" in summaries
@@ -115,7 +120,7 @@ def test_extract_ignores_non_target_events(sc_db_path, kctl_conn):
     add_event(sc_db_path, "decision", {"summary": "Keep it"})
 
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    created = extract_candidates(
+    created, _ = extract_candidates(
         sprintctl_conn=sc_conn,
         kctl_conn=kctl_conn,
         sprintctl_db_path=str(sc_db_path),
@@ -134,14 +139,14 @@ def test_extract_is_idempotent(sc_db_path, kctl_conn):
     add_event(sc_db_path, "decision", {"summary": "Auth decision"})
 
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    created_first = extract_candidates(
+    created_first, _ = extract_candidates(
         sc_conn, kctl_conn, str(sc_db_path),
         _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
     )
     sc_conn.close()
 
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    created_second = extract_candidates(
+    created_second, _ = extract_candidates(
         sc_conn, kctl_conn, str(sc_db_path),
         _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
     )
@@ -157,7 +162,7 @@ def test_extract_incremental(sc_db_path, kctl_conn):
 
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
     # Only extract events after eid1
-    created = extract_candidates(
+    created, _ = extract_candidates(
         sc_conn, kctl_conn, str(sc_db_path),
         _extract.DEFAULT_EVENT_TYPES, since_event_id=eid1, sprint_id=None, now=NOW,
     )
@@ -174,7 +179,7 @@ def test_extract_updates_extractor_state(sc_db_path, kctl_conn):
     extract_candidates(
         sc_conn, kctl_conn, str(sc_db_path),
         _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
-    )
+    )  # tuple return ignored here
     sc_conn.close()
 
     state = _db.get_extractor_state(kctl_conn, str(sc_db_path))
@@ -200,7 +205,7 @@ def test_extract_sprint_filter(sc_db_path, kctl_conn, sc_conn):
     add_event(sc_db_path, "decision", {"summary": "Sprint 1 decision"}, sprint_id=1)
 
     sc_conn3 = _db.get_sprintctl_connection(sc_db_path)
-    created = extract_candidates(
+    created, _ = extract_candidates(
         sc_conn3, kctl_conn, str(sc_db_path),
         _extract.DEFAULT_EVENT_TYPES, 0, sprint_id=1, now=NOW,
     )
