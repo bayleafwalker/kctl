@@ -103,19 +103,17 @@ def extract_candidates(
 
     for ev in events:
         ev_dict = dict(ev)
-        if _db.candidate_exists(kctl_conn, ev_dict["id"]):
-            if ev_dict["id"] > max_event_id:
-                max_event_id = ev_dict["id"]
-            continue
+        if ev_dict["id"] > max_event_id:
+            max_event_id = ev_dict["id"]
 
         candidate, has_structured = build_candidate(ev_dict, now)
-        _db.insert_candidate(kctl_conn, candidate)
+        row_id = _db.insert_candidate(kctl_conn, candidate)
+        if row_id is None:
+            continue  # duplicate — UNIQUE constraint fired
+
         created.append(candidate)
         if has_structured:
             structured_count += 1
-
-        if ev_dict["id"] > max_event_id:
-            max_event_id = ev_dict["id"]
 
     _db.update_extractor_state(kctl_conn, sprintctl_db_path, max_event_id, now)
     return created, structured_count
@@ -123,10 +121,10 @@ def extract_candidates(
 
 def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
     """
-    Try to import sprintctl.calc for maintain-check diagnostics.
+    Check for stale work items in active sprints.
     Returns a list of warning strings (empty = all clear).
-    Falls back to subprocess if import fails.
-    Extraction always proceeds regardless.
+    Tries to import sprintctl.calc first; falls back to a direct DB query.
+    Extraction always proceeds regardless of warnings.
     """
     warnings: list[str] = []
 

@@ -107,15 +107,8 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 # --- KnowledgeCandidate ---
 
-def candidate_exists(conn: sqlite3.Connection, source_event_id: int) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM knowledge_candidate WHERE source_event_id = ?",
-        (source_event_id,),
-    ).fetchone()
-    return row is not None
-
-
-def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
+def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int | None:
+    """Insert a candidate. Returns the new row id, or None if already exists."""
     cur = conn.execute(
         """
         INSERT OR IGNORE INTO knowledge_candidate
@@ -136,7 +129,7 @@ def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int:
         ),
     )
     conn.commit()
-    return cur.lastrowid
+    return cur.lastrowid if cur.rowcount else None
 
 
 def get_candidate(conn: sqlite3.Connection, candidate_id: int) -> dict | None:
@@ -318,6 +311,7 @@ def update_extractor_state(
 
 REQUIRED_SPRINTCTL_TABLES = {"sprint", "track", "work_item", "event"}
 REQUIRED_EVENT_COLUMNS = {"id", "sprint_id", "work_item_id", "event_type", "payload", "created_at"}
+REQUIRED_WORK_ITEM_COLUMNS = {"id", "title", "track_id"}
 
 
 def validate_sprintctl_schema(sprintctl_conn: sqlite3.Connection) -> None:
@@ -343,5 +337,16 @@ def validate_sprintctl_schema(sprintctl_conn: sqlite3.Connection) -> None:
     if missing_cols:
         raise ValueError(
             f"sprintctl DB schema mismatch — event table missing columns: {', '.join(sorted(missing_cols))}. "
+            "Check that sprintctl is up to date."
+        )
+
+    wi_cols = {
+        row[1]
+        for row in sprintctl_conn.execute("PRAGMA table_info(work_item)").fetchall()
+    }
+    missing_wi_cols = REQUIRED_WORK_ITEM_COLUMNS - wi_cols
+    if missing_wi_cols:
+        raise ValueError(
+            f"sprintctl DB schema mismatch — work_item table missing columns: {', '.join(sorted(missing_wi_cols))}. "
             "Check that sprintctl is up to date."
         )
