@@ -288,7 +288,7 @@ def render_cmd(obj, category, tag, sprint_id, output) -> None:
     conn = obj["conn"]
     entries = _db.list_entries(conn, category=category, tag=tag, sprint_id=sprint_id)
 
-    project = os.environ.get("KCTL_PROJECT", "homelab-analytics")
+    project = os.environ.get("KCTL_PROJECT", "project")
     lines = [
         f"# Knowledge Base — {project}",
         f"Generated: {_now()}",

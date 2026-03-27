@@ -54,7 +54,7 @@ def publish_candidate(
         "tags": tags_json if tags is not None else (candidate.get("tags") or "[]"),
         "category": category,
         "source_sprint": source_sprint,
-        "source_track": None,
+        "source_track": candidate.get("source_track"),
         "created_at": now,
     }
     entry_id = _db.insert_entry(conn, entry)

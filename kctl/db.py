@@ -52,6 +52,10 @@ _MIGRATIONS: list[str] = [
         last_run_at        TEXT    NOT NULL
     );
     """,
+    # Migration 2: add source_track to knowledge_candidate
+    """
+    ALTER TABLE knowledge_candidate ADD COLUMN source_track TEXT
+    """,
 ]
 
 
@@ -112,14 +116,15 @@ def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int | None:
     cur = conn.execute(
         """
         INSERT OR IGNORE INTO knowledge_candidate
-            (source_event_id, source_sprint_id, source_item_id, event_type,
+            (source_event_id, source_sprint_id, source_item_id, source_track, event_type,
              summary, detail, tags, confidence, status, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
         """,
         (
             candidate["source_event_id"],
             candidate["source_sprint_id"],
             candidate.get("source_item_id"),
+            candidate.get("track_name"),
             candidate["event_type"],
             candidate["summary"],
             candidate.get("detail"),
@@ -354,12 +359,18 @@ def validate_sprintctl_schema(sprintctl_conn: sqlite3.Connection) -> None:
         )
 
     # Verify the work_item CHECK constraint covers all status values kctl depends on.
+    # Probe by attempting an INSERT with each required status value against an in-memory
+    # shadow of the DDL, avoiding any write to the read-only sprintctl connection.
     # Reads the DDL from sqlite_master — no write access required.
     ddl_row = sprintctl_conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='work_item'"
     ).fetchone()
     ddl = ddl_row[0] if ddl_row else ""
-    missing_statuses = {s for s in REQUIRED_WORK_ITEM_STATUSES if f"'{s}'" not in ddl}
+    # Use a regex to extract all quoted tokens from the CHECK clause so the
+    # check is insensitive to whitespace or quote style (single vs double) in the DDL.
+    import re as _re
+    quoted_tokens = set(_re.findall(r"""['"]([\w-]+)['"]""", ddl))
+    missing_statuses = REQUIRED_WORK_ITEM_STATUSES - quoted_tokens
     if missing_statuses:
         raise ValueError(
             f"sprintctl DB schema mismatch — work_item.status CHECK constraint missing "

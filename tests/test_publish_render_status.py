@@ -251,6 +251,36 @@ def test_cli_status_sprint_filter(sc_db_path, kctl_conn, runner):
 
 
 # ---------------------------------------------------------------------------
+# source_track flows through extract → publish → entry
+# ---------------------------------------------------------------------------
+
+def test_publish_preserves_source_track(sc_db_path, kctl_conn):
+    cid = _seed_approved(sc_db_path, kctl_conn, "Track flow test")
+    entry = _publish.publish_candidate(
+        kctl_conn, candidate_id=cid, title=None,
+        body="body", category="decision", tags=None, now=NOW2,
+    )
+    assert entry["source_track"] == "backend"
+
+
+def test_publish_source_track_none_when_no_item(sc_db_path, kctl_conn):
+    from tests.conftest import add_event as _add_event
+    from kctl.extract import extract_candidates as _ec
+    _add_event(sc_db_path, "decision", {"summary": "No item event"}, work_item_id=None)
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    _ec(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    candidates = _db.list_candidates(kctl_conn, status="candidate")
+    cid = candidates[-1]["id"]
+    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+    entry = _publish.publish_candidate(
+        kctl_conn, candidate_id=cid, title=None,
+        body="body", category="decision", tags=None, now=NOW2,
+    )
+    assert entry["source_track"] is None
+
+
+# ---------------------------------------------------------------------------
 # extract — quality reporting
 # ---------------------------------------------------------------------------
 

@@ -54,6 +54,7 @@ def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
         "detail": payload.get("detail"),
         "tags": json.dumps(tags),
         "confidence": payload.get("confidence"),
+        "track_name": event["track_name"] if event["track_name"] else None,
         "extracted_at": extracted_at,
     }
     return candidate, has_structured_payload
@@ -133,9 +134,10 @@ def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
         from datetime import datetime as _datetime
         from sprintctl import db as sc_db  # type: ignore[import]
         from sprintctl import calc as sc_calc  # type: ignore[import]
-        from sprintctl import maintain as sc_maintain  # type: ignore[import]
+        from sprintctl.maintain import DEFAULT_STALE_THRESHOLD  # type: ignore[import]
 
-        _threshold = sc_maintain._stale_threshold()
+        _raw = os.environ.get("SPRINTCTL_STALE_THRESHOLD")
+        _threshold = timedelta(hours=float(_raw)) if _raw else DEFAULT_STALE_THRESHOLD
         _now = _datetime.now(timezone.utc)
         sprints = sc_db.list_sprints(sprintctl_conn)
         for sprint in sprints:

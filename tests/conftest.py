@@ -44,7 +44,8 @@ def _init_sprintctl_schema(conn: sqlite3.Connection) -> None:
             goal        TEXT    NOT NULL DEFAULT '',
             start_date  TEXT    NOT NULL,
             end_date    TEXT    NOT NULL,
-            status      TEXT    NOT NULL DEFAULT 'planned'
+            status      TEXT    NOT NULL DEFAULT 'planned',
+            kind        TEXT    NOT NULL DEFAULT 'active_sprint'
         );
         CREATE TABLE IF NOT EXISTS track (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,14 +54,16 @@ def _init_sprintctl_schema(conn: sqlite3.Connection) -> None:
             description TEXT  NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS work_item (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            track_id   INTEGER NOT NULL,
-            sprint_id  INTEGER NOT NULL,
-            title      TEXT    NOT NULL,
-            status     TEXT    NOT NULL DEFAULT 'pending'
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id    INTEGER NOT NULL,
+            sprint_id   INTEGER NOT NULL,
+            title       TEXT    NOT NULL,
+            description TEXT    NOT NULL DEFAULT '',
+            status      TEXT    NOT NULL DEFAULT 'pending'
                                 CHECK (status IN ('pending', 'active', 'done', 'blocked')),
-            assignee   TEXT,
-            updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+            assignee    TEXT,
+            created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+            updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
         );
         CREATE TABLE IF NOT EXISTS event (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
