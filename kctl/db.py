@@ -56,6 +56,13 @@ _MIGRATIONS: list[str] = [
     """
     ALTER TABLE knowledge_candidate ADD COLUMN source_track TEXT
     """,
+    # Migration 3: preserve source event context for handoff and coordination analysis.
+    """
+    ALTER TABLE knowledge_candidate ADD COLUMN source_actor TEXT;
+    ALTER TABLE knowledge_candidate ADD COLUMN source_type TEXT;
+    ALTER TABLE knowledge_candidate ADD COLUMN source_created_at TEXT;
+    ALTER TABLE knowledge_candidate ADD COLUMN source_payload TEXT
+    """,
 ]
 
 
@@ -116,15 +123,20 @@ def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int | None:
     cur = conn.execute(
         """
         INSERT OR IGNORE INTO knowledge_candidate
-            (source_event_id, source_sprint_id, source_item_id, source_track, event_type,
-             summary, detail, tags, confidence, status, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
+            (source_event_id, source_sprint_id, source_item_id, source_track,
+             source_actor, source_type, source_created_at, source_payload,
+             event_type, summary, detail, tags, confidence, status, extracted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
         """,
         (
             candidate["source_event_id"],
             candidate["source_sprint_id"],
             candidate.get("source_item_id"),
             candidate.get("track_name"),
+            candidate.get("source_actor"),
+            candidate.get("source_type"),
+            candidate.get("source_created_at"),
+            candidate.get("source_payload"),
             candidate["event_type"],
             candidate["summary"],
             candidate.get("detail"),
@@ -315,7 +327,16 @@ def update_extractor_state(
 # --- Schema validation for sprintctl DB ---
 
 REQUIRED_SPRINTCTL_TABLES = {"sprint", "track", "work_item", "event"}
-REQUIRED_EVENT_COLUMNS = {"id", "sprint_id", "work_item_id", "event_type", "payload", "created_at"}
+REQUIRED_EVENT_COLUMNS = {
+    "id",
+    "sprint_id",
+    "work_item_id",
+    "source_type",
+    "actor",
+    "event_type",
+    "payload",
+    "created_at",
+}
 REQUIRED_WORK_ITEM_COLUMNS = {"id", "title", "track_id", "status", "updated_at"}
 # Statuses kctl depends on — preflight query and staleness logic both reference these.
 REQUIRED_WORK_ITEM_STATUSES = {"pending", "active", "done", "blocked"}

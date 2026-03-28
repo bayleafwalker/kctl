@@ -149,11 +149,13 @@ kctl extract --no-preflight                            # skip sprintctl stale-it
 
 Scans sprintctl's event table for knowledge-bearing event types and creates candidates. Idempotent — re-running against the same events creates no duplicates. By default, only events newer than the last extraction are scanned (watermark in `extractor_state`).
 
-**Default event types:** `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`
+**Default event types:** `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`, `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure`
 
 Extraction reports how many candidates had structured payloads (agent-emitted, with `summary`/`detail`/`tags` fields) vs. bare events (fallback summary derived from event type and item title). Structured payloads carry richer item-level context and need less editing at review time.
 
-Sprint is used as a container reference only — most of the meaningful execution context comes from the source work item, source track, event type, tags, and the payload written at event time.
+Sprint is used as a container reference only — most of the meaningful execution context comes from the source work item, source track, event type, tags, source actor/source type, and the raw payload written at event time.
+
+This includes claim-ownership events emitted by sprintctl. When a session handoff, ownership correction, or coordination failure matters later, kctl preserves the structured source payload so review can still see the relevant identity context instead of only a flattened summary.
 
 ### Review
 
@@ -176,6 +178,8 @@ Approve and reject are the only mutations available from review. Status transiti
 - `candidate → approved` or `candidate → rejected`
 - No further transitions from `rejected`
 - `approved → published` happens via `kctl publish`
+
+`review show` includes source actor, source type, source timestamp, and the preserved source payload, which is especially useful for handoff and coordination events that carry nested identity details.
 
 ### Publish
 

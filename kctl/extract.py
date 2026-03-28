@@ -12,6 +12,10 @@ DEFAULT_EVENT_TYPES = {
     "pattern-noted",
     "risk-accepted",
     "lesson-learned",
+    "claim-handoff",
+    "claim-ownership-corrected",
+    "claim-ambiguity-detected",
+    "coordination-failure",
 }
 
 
@@ -28,7 +32,7 @@ def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
     Returns (candidate, has_structured_payload) where has_structured_payload is True
     when the event carried a non-empty JSON object with at least a 'summary' key.
     """
-    raw_payload = event["payload"] if event["payload"] else "{}"
+    raw_payload = event.get("payload") if event.get("payload") else "{}"
     try:
         payload = json.loads(raw_payload)
         if not isinstance(payload, dict):
@@ -38,7 +42,7 @@ def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
 
     has_structured_payload = bool(payload.get("summary"))
 
-    item_title = event["item_title"] if event["item_title"] else "no item"
+    item_title = event.get("item_title") if event.get("item_title") else "no item"
     summary = payload.get("summary") or f'{event["event_type"]}: {item_title}'
 
     tags = payload.get("tags", [])
@@ -49,12 +53,16 @@ def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
         "source_event_id": event["id"],
         "source_sprint_id": event["sprint_id"],
         "source_item_id": event["work_item_id"],
+        "source_actor": event.get("actor"),
+        "source_type": event.get("source_type"),
+        "source_created_at": event.get("created_at"),
+        "source_payload": raw_payload,
         "event_type": event["event_type"],
         "summary": summary,
         "detail": payload.get("detail"),
         "tags": json.dumps(tags),
         "confidence": payload.get("confidence"),
-        "track_name": event["track_name"] if event["track_name"] else None,
+        "track_name": event.get("track_name") if event.get("track_name") else None,
         "extracted_at": extracted_at,
     }
     return candidate, has_structured_payload
@@ -85,7 +93,8 @@ def extract_candidates(
 
     query = f"""
         SELECT
-            e.id, e.sprint_id, e.work_item_id, e.event_type, e.payload,
+            e.id, e.sprint_id, e.work_item_id, e.source_type, e.actor,
+            e.event_type, e.payload, e.created_at,
             wi.title AS item_title,
             t.name   AS track_name
         FROM event e

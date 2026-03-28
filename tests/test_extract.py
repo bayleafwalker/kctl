@@ -20,6 +20,8 @@ def test_build_candidate_full_payload():
         "id": 1,
         "sprint_id": 1,
         "work_item_id": 1,
+        "source_type": "actor",
+        "actor": "agent-a",
         "event_type": "decision",
         "payload": json.dumps({
             "summary": "Use RS256",
@@ -27,6 +29,7 @@ def test_build_candidate_full_payload():
             "tags": ["auth", "architecture"],
             "confidence": "high",
         }),
+        "created_at": "2026-03-25T09:00:00Z",
         "item_title": "Implement auth",
         "track_name": "backend",
     }
@@ -36,6 +39,10 @@ def test_build_candidate_full_payload():
     assert json.loads(c["tags"]) == ["auth", "architecture"]
     assert c["confidence"] == "high"
     assert c["source_event_id"] == 1
+    assert c["source_actor"] == "agent-a"
+    assert c["source_type"] == "actor"
+    assert c["source_created_at"] == "2026-03-25T09:00:00Z"
+    assert json.loads(c["source_payload"])["summary"] == "Use RS256"
     assert c["extracted_at"] == NOW
     assert structured is True
 
@@ -319,3 +326,50 @@ def test_extract_preserves_track_name(sc_db_path, kctl_conn):
     # Verify it was persisted in the DB
     candidates = _db.list_candidates(kctl_conn, status="candidate")
     assert candidates[0]["source_track"] == "backend"
+
+
+def test_extract_preserves_claim_handoff_identity_context(sc_db_path, kctl_conn):
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {
+            "summary": "Claim #7 handed off to bot-2",
+            "detail": "Ownership rotated after a clean stop.",
+            "tags": ["claims", "handoff", "coordination"],
+            "mode": "rotate",
+            "from_identity": {
+                "claim_id": 7,
+                "actor": "bot-1",
+                "runtime_session_id": "thread-1",
+            },
+            "to_identity": {
+                "claim_id": 7,
+                "actor": "bot-2",
+                "runtime_session_id": "thread-2",
+            },
+        },
+        actor="bot-1",
+        source_type="system",
+        created_at="2026-03-25T11:15:00Z",
+    )
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    created, _ = extract_candidates(
+        sc_conn, kctl_conn, str(sc_db_path),
+        _extract.DEFAULT_EVENT_TYPES, 0, None, NOW,
+    )
+    sc_conn.close()
+
+    assert len(created) == 1
+    assert created[0]["event_type"] == "claim-handoff"
+    assert created[0]["source_actor"] == "bot-1"
+    assert created[0]["source_type"] == "system"
+    payload = json.loads(created[0]["source_payload"])
+    assert payload["from_identity"]["actor"] == "bot-1"
+    assert payload["to_identity"]["actor"] == "bot-2"
+
+    candidates = _db.list_candidates(kctl_conn, status="candidate")
+    assert candidates[0]["source_actor"] == "bot-1"
+    assert candidates[0]["source_type"] == "system"
+    stored_payload = json.loads(candidates[0]["source_payload"])
+    assert stored_payload["mode"] == "rotate"

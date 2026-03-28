@@ -25,6 +25,15 @@ def _format_tags(tags_json: str | None) -> str:
         return tags_json or ""
 
 
+def _decode_json_field(raw: str | None):
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+
+
 def _print_candidate(c: dict) -> None:
     tags = _format_tags(c.get("tags"))
     click.echo(f"  #{c['id']:>4}  [{c['status']:>9}]  {c['event_type']:20}  {c['summary']}")
@@ -160,6 +169,10 @@ def review_list(obj, status, tag, sprint_id, output_json) -> None:
                 "tags": json.loads(c.get("tags") or "[]"),
                 "source_sprint_id": c["source_sprint_id"],
                 "source_track": c.get("source_track"),
+                "source_actor": c.get("source_actor"),
+                "source_type": c.get("source_type"),
+                "source_created_at": c.get("source_created_at"),
+                "source_payload": _decode_json_field(c.get("source_payload")),
                 "confidence": c.get("confidence"),
             }
             for c in candidates
@@ -191,6 +204,9 @@ def review_show(obj, candidate_id) -> None:
     click.echo(f"Candidate #{c['id']}")
     click.echo(f"  Status:      {c['status']}")
     click.echo(f"  Event type:  {c['event_type']}")
+    click.echo(f"  Source type: {c.get('source_type') or '(none)'}")
+    click.echo(f"  Source by:   {c.get('source_actor') or '(none)'}")
+    click.echo(f"  Source at:   {c.get('source_created_at') or '(none)'}")
     click.echo(f"  Track:       {c.get('source_track') or '(none)'}")
     click.echo(f"  Item ID:     {c['source_item_id'] or '(none)'}")
     click.echo(f"  Summary:     {c['summary']}")
@@ -199,6 +215,8 @@ def review_show(obj, candidate_id) -> None:
     click.echo(f"  Confidence:  {c['confidence'] or '(none)'}")
     click.echo(f"  Sprint:      {c['source_sprint_id']} (container ref)")
     click.echo(f"  Extracted:   {c['extracted_at']}")
+    if c.get("source_payload"):
+        click.echo(f"  Source payload: {json.dumps(_decode_json_field(c['source_payload']))}")
     if c.get("reviewed_at"):
         click.echo(f"  Reviewed:    {c['reviewed_at']} by {c['reviewed_by']}")
     if c.get("review_notes"):

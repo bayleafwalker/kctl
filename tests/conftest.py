@@ -112,15 +112,36 @@ def sc_conn(sc_db_path):
     conn.close()
 
 
-def add_event(sc_db_path, event_type: str, payload: dict | None = None,
-              sprint_id: int = 1, work_item_id: int | None = 1) -> int:
+def add_event(
+    sc_db_path,
+    event_type: str,
+    payload: dict | None = None,
+    sprint_id: int = 1,
+    work_item_id: int | None = 1,
+    actor: str = "test",
+    source_type: str = "actor",
+    created_at: str | None = None,
+) -> int:
     """Helper: add an event to the fixture sprintctl DB, return its ID."""
     conn = sqlite3.connect(str(sc_db_path))
     payload_str = json.dumps(payload) if payload else "{}"
-    cur = conn.execute(
-        "INSERT INTO event (sprint_id, work_item_id, event_type, payload) VALUES (?,?,?,?)",
-        (sprint_id, work_item_id, event_type, payload_str),
-    )
+    if created_at is None:
+        cur = conn.execute(
+            """
+            INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload)
+            VALUES (?,?,?,?,?,?)
+            """,
+            (sprint_id, work_item_id, source_type, actor, event_type, payload_str),
+        )
+    else:
+        cur = conn.execute(
+            """
+            INSERT INTO event
+                (sprint_id, work_item_id, source_type, actor, event_type, payload, created_at)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            (sprint_id, work_item_id, source_type, actor, event_type, payload_str, created_at),
+        )
     conn.commit()
     eid = cur.lastrowid
     conn.close()
