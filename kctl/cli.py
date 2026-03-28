@@ -191,12 +191,13 @@ def review_show(obj, candidate_id) -> None:
     click.echo(f"Candidate #{c['id']}")
     click.echo(f"  Status:      {c['status']}")
     click.echo(f"  Event type:  {c['event_type']}")
+    click.echo(f"  Track:       {c.get('source_track') or '(none)'}")
+    click.echo(f"  Item ID:     {c['source_item_id'] or '(none)'}")
     click.echo(f"  Summary:     {c['summary']}")
     click.echo(f"  Detail:      {c['detail'] or '(none)'}")
     click.echo(f"  Tags:        {_format_tags(c.get('tags')) or '(none)'}")
     click.echo(f"  Confidence:  {c['confidence'] or '(none)'}")
-    click.echo(f"  Sprint ID:   {c['source_sprint_id']}")
-    click.echo(f"  Item ID:     {c['source_item_id'] or '(none)'}")
+    click.echo(f"  Sprint:      {c['source_sprint_id']} (container ref)")
     click.echo(f"  Extracted:   {c['extracted_at']}")
     if c.get("reviewed_at"):
         click.echo(f"  Reviewed:    {c['reviewed_at']} by {c['reviewed_by']}")
@@ -329,8 +330,11 @@ def render_cmd(obj, category, tag, sprint_id, output) -> None:
             lines.append("")
             for e in by_category[cat]:
                 lines.append(f"### {e['title']}")
-                lines.append(f"Source: Sprint {e['source_sprint']}" +
-                              (f", track {e['source_track']}" if e.get("source_track") else ""))
+                source_parts = []
+                if e.get("source_track"):
+                    source_parts.append(f"track: {e['source_track']}")
+                source_parts.append(f"sprint: {e['source_sprint']}")
+                lines.append(f"Source: {', '.join(source_parts)}")
                 tags_str = _format_tags(e.get("tags"))
                 if tags_str:
                     lines.append(f"Tags: {tags_str}")
@@ -376,7 +380,13 @@ def status_cmd(obj, sprint_id, output_json) -> None:
                 "published": len(published),
             },
             "approved": [
-                {"id": c["id"], "summary": c["summary"], "event_type": c["event_type"]}
+                {
+                    "id": c["id"],
+                    "summary": c["summary"],
+                    "event_type": c["event_type"],
+                    "source_track": c.get("source_track"),
+                    "source_sprint_id": c["source_sprint_id"],
+                }
                 for c in approved
             ],
         }

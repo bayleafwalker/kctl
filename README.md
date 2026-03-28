@@ -2,12 +2,12 @@
 
 A local-first knowledge promotion and backlog-seeding CLI for a single developer working through [sprintctl](https://github.com/bayleafwalker/sprintctl) sprints.
 
-kctl recovers durable knowledge from sprint exhaust — decisions, patterns, resolved blockers, lessons — reviews it, promotes it to a committed knowledge base, and makes it available to seed future sprints.
+kctl recovers durable knowledge from execution — decisions, patterns, resolved blockers, lessons — reviews it, promotes it to a committed knowledge base, and makes it available to seed future work items and tracks.
 
 ## What kctl is
 
 - A tool for one developer (or one sparse agentic session at a time)
-- A consumer of sprintctl event streams and sprint artifacts
+- A consumer of sprintctl event streams (read-only)
 - A review-gated pipeline: candidate → approved → published → rendered markdown
 - A source of structured backlog seeds derived from reviewed knowledge
 - Local-first: SQLite on disk, convergence through committed markdown
@@ -40,7 +40,7 @@ sprintctl events
   kctl render           — emit knowledge.md, committed alongside sprint.md
       │
       ▼
-  future sprint setup   — reviewed knowledge seeds new sprint goals, tracks, and work items
+  future work           — reviewed knowledge seeds new tracks and work items
 ```
 
 **Three distinct states:**
@@ -55,21 +55,21 @@ Rejected candidates are retained for audit but excluded from all outputs.
 
 ## Backlog seeding
 
-The primary reason to maintain a knowledge base is to inform future work. After closing a sprint:
+The primary reason to maintain a knowledge base is to inform future work. After a sprint closes:
 
 1. Run `kctl render --output knowledge.md` and commit it.
-2. When planning the next sprint in sprintctl, open `knowledge.md` (or use `kctl render --category decision --sprint-id N`) as reference.
-3. Patterns, risks, and decisions surfaced in past sprints become explicit inputs to new sprint goals and track definitions.
+2. When opening the next sprint in sprintctl, use `knowledge.md` (or `kctl render --category decision --sprint-id N`) as reference.
+3. Decisions, patterns, and risks surfaced during execution become concrete inputs for new tracks and work items — not sprint ceremony, just execution context for what to do next.
 
 For agentic sessions, use machine-readable outputs instead of markdown prose:
 
 ```sh
-kctl status --json                         # pipeline counts + approved list
+kctl status --json                         # pipeline counts + approved list with source context
 kctl review list --status approved --json  # approved candidates ready to publish
 kctl render --sprint-id N                  # knowledge from a specific sprint
 ```
 
-An agent populating a new sprint can read `kctl status --json`, inspect approved entries, and turn them into sprintctl work items or track goals without parsing markdown.
+An agent shaping new work items can read `kctl status --json`, inspect approved entries (including source track and sprint), and turn them into sprintctl work items without parsing markdown.
 
 ## Requirements
 
@@ -151,7 +151,9 @@ Scans sprintctl's event table for knowledge-bearing event types and creates cand
 
 **Default event types:** `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`
 
-Extraction reports how many candidates had structured payloads (agent-emitted, with `summary`/`detail`/`tags` fields) vs. bare events (fallback summary derived from event type and item title). Structured payloads are higher quality and need less editing at review time.
+Extraction reports how many candidates had structured payloads (agent-emitted, with `summary`/`detail`/`tags` fields) vs. bare events (fallback summary derived from event type and item title). Structured payloads carry richer item-level context and need less editing at review time.
+
+Sprint is used as a container reference only — most of the meaningful execution context comes from the source work item, source track, event type, tags, and the payload written at event time.
 
 ### Review
 
@@ -186,7 +188,7 @@ Promotes an approved candidate to a knowledge entry. Requires `--body` and `--ca
 
 **Categories:** `decision`, `pattern`, `lesson`, `risk`, `reference`
 
-This is where the reviewed candidate gets its durable body — the actual knowledge content that will appear in rendered output and inform future sprints.
+This is where the reviewed candidate gets its durable body — the actual knowledge content that will appear in rendered output and inform future work items.
 
 ### Render
 
@@ -198,7 +200,7 @@ kctl render --sprint-id 1               # entries from a specific sprint
 kctl render --output knowledge.md        # write to file
 ```
 
-Renders published knowledge entries as structured markdown, grouped by category (decisions, patterns, lessons, risks, references). The document header uses `KCTL_PROJECT` (defaults to `homelab-analytics` if unset).
+Renders published knowledge entries as structured markdown, grouped by category (decisions, patterns, lessons, risks, references). Each entry shows its source track and sprint container. The document header uses `KCTL_PROJECT` (defaults to `homelab-analytics` if unset).
 
 Commit the output alongside the sprint render:
 
@@ -207,7 +209,7 @@ kctl render --output knowledge.md
 git add knowledge.md sprint.md
 ```
 
-The committed markdown is the shared, durable record. The local kctl database is working state.
+The committed markdown is the durable record. The local kctl database is working state.
 
 ### Status
 
@@ -226,7 +228,13 @@ JSON output format:
   "sprint_id": null,
   "counts": { "candidate": 2, "approved": 1, "published": 5 },
   "approved": [
-    { "id": 3, "summary": "Use RS256 for auth tokens", "event_type": "decision" }
+    {
+      "id": 3,
+      "summary": "Use RS256 for auth tokens",
+      "event_type": "decision",
+      "source_track": "backend",
+      "source_sprint_id": 1
+    }
   ]
 }
 ```
@@ -273,7 +281,7 @@ sprintctl (owns)          kctl (reads)
                            knowledge.md   ← committed, shared
 ```
 
-sprintctl has no runtime dependency on kctl. kctl never writes to sprintctl's database. The relationship is one-way: kctl consumes the event stream that sprintctl produces as a side effect of sprint execution.
+sprintctl has no runtime dependency on kctl. kctl never writes to sprintctl's database. The relationship is one-way: kctl consumes the event stream that sprintctl produces as a side effect of execution. Sprint is used as a container reference; the meaningful execution signals are in the events and their associated work items and tracks.
 
 ## Integration with sprintctl's envrc template
 

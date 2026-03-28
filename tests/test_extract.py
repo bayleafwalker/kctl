@@ -193,8 +193,7 @@ def test_extract_sprint_filter(sc_db_path, kctl_conn, sc_conn):
     # Add a second sprint and events for each
     sc_conn2 = sqlite3.connect(str(sc_db_path))
     sc_conn2.execute(
-        "INSERT INTO sprint (id, name, goal, start_date, end_date, status) VALUES (2,'S2','',?,?,'planned')",
-        ("2026-04-01", "2026-04-30"),
+        "INSERT INTO sprint (id, name, status) VALUES (2,'S2','planned')",
     )
     sc_conn2.execute(
         "INSERT INTO event (sprint_id, work_item_id, event_type, payload) VALUES (2, NULL, 'decision', ?)",

@@ -203,6 +203,9 @@ def test_cli_render_outputs_markdown(sc_db_path, kctl_conn, runner):
     assert "## Decisions" in result.output
     assert "### Use RS256" in result.output
     assert "RS256 is better." in result.output
+    # Track is foregrounded; sprint is a container ref
+    assert "track: backend" in result.output
+    assert "sprint: 1" in result.output
 
 
 def test_cli_render_uses_default_project_name(runner):
@@ -258,7 +261,7 @@ def test_cli_status_sprint_filter(sc_db_path, kctl_conn, runner):
 
 
 def test_cli_status_json_output(sc_db_path, kctl_conn, runner):
-    """--json emits valid JSON with counts and approved list."""
+    """--json emits valid JSON with counts and approved list including source context."""
     cid = _seed_approved(sc_db_path, kctl_conn, "Approved for JSON")
     result = runner.invoke(cli, ["status", "--json"])
     assert result.exit_code == 0, result.output
@@ -266,7 +269,13 @@ def test_cli_status_json_output(sc_db_path, kctl_conn, runner):
     assert "counts" in data
     assert data["counts"]["approved"] == 1
     assert data["counts"]["candidate"] == 0
-    assert any(a["id"] == cid for a in data["approved"])
+    approved = data["approved"]
+    assert any(a["id"] == cid for a in approved)
+    # Approved entries include source context for agent backlog shaping
+    entry = next(a for a in approved if a["id"] == cid)
+    assert "source_track" in entry
+    assert "source_sprint_id" in entry
+    assert entry["source_sprint_id"] == 1
     assert data["sprint_id"] is None
 
 

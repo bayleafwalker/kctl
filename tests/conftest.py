@@ -42,8 +42,8 @@ def _init_sprintctl_schema(conn: sqlite3.Connection) -> None:
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             name        TEXT    NOT NULL,
             goal        TEXT    NOT NULL DEFAULT '',
-            start_date  TEXT    NOT NULL,
-            end_date    TEXT    NOT NULL,
+            start_date  TEXT,
+            end_date    TEXT,
             status      TEXT    NOT NULL DEFAULT 'planned',
             kind        TEXT    NOT NULL DEFAULT 'active_sprint'
         );
@@ -88,8 +88,8 @@ def sc_db_path(tmp_path):
 
     # Sprint
     conn.execute(
-        "INSERT INTO sprint (name, goal, start_date, end_date, status) VALUES (?,?,?,?,?)",
-        ("Sprint 1", "Ship Phase 1", "2026-03-01", "2026-03-31", "active"),
+        "INSERT INTO sprint (name, status) VALUES (?,?)",
+        ("Sprint 1", "active"),
     )
     # Track
     conn.execute(
