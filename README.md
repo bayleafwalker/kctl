@@ -68,7 +68,10 @@ Example artifact surfaces for agents:
 kctl status --json                                  # durable pipeline state by default
 kctl status --kind all --json                       # durable + coordination counts separated
 kctl review list --status approved --json           # approved durable candidates ready to publish
+kctl review show --id 42 --json                     # one candidate with full source context
 kctl review list --kind coordination --json         # coordination review stream
+kctl render --json                                  # durable knowledge entries as structured JSON
+kctl preflight --json                               # stale-item warnings as structured JSON
 kctl render --sprint-id N                           # durable knowledge from one sprint
 ```
 
@@ -185,6 +188,7 @@ kctl review list --sprint-id 1                     # filter by source sprint
 kctl review list --json                            # machine-readable output
 
 kctl review show --id 5
+kctl review show --id 5 --json                     # one candidate as machine-readable JSON
 
 kctl review approve --id 5
 kctl review approve --id 5 --title "Revised title" --detail "Expanded context" --tags '["auth","lessons"]'
@@ -230,6 +234,7 @@ kctl render                              # all published durable entries to stdo
 kctl render --category decision          # filter by category
 kctl render --tag auth                   # filter by tag
 kctl render --sprint-id 1                # entries from a specific sprint
+kctl render --json                       # machine-readable output
 kctl render --output knowledge.md        # write to file
 ```
 
@@ -274,11 +279,13 @@ Example JSON output:
 kctl preflight
 kctl preflight --sprint-id 1
 kctl preflight --sprintctl-db /path/to/sprint.db
+kctl preflight --json
 ```
 
 Runs sprintctl's own stale-item diagnostics and reports warnings before extraction. This follows sprintctl's current semantics, including `SPRINTCTL_STALE_THRESHOLD` and `SPRINTCTL_PENDING_STALE_THRESHOLD`, instead of maintaining a separate SQL shadow in kctl.
 
 `kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Warnings do not block extraction.
+`kctl preflight --json` emits a structured payload with `ok`, `sprint_id`, and `warnings`.
 
 ## Architecture
 
