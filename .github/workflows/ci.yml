@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.11"
+          - "3.12"
+    steps:
+      - name: Checkout kctl
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Sync dependencies
+        run: uv sync --frozen --dev
+
+      - name: Run test suite
+        run: uv run pytest -q
+
+  sprintctl-compat:
+    name: Sprintctl Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kctl
+        uses: actions/checkout@v4
+
+      - name: Checkout sprintctl
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/sprintctl
+          path: sprintctl-src
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Sync dependencies
+        run: uv sync --frozen --dev
+
+      - name: Verify sprintctl import path
+        env:
+          PYTHONPATH: ${{ github.workspace }}/sprintctl-src
+        run: uv run python -c "import sprintctl.db"
+
+      - name: Run sprintctl contract tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}/sprintctl-src
+        run: >-
+          uv run pytest -q
+          tests/test_preflight.py::test_run_preflight_via_cli_fallback
+          tests/test_preflight.py::test_run_preflight_respects_pending_stale_threshold_with_real_sprintctl
+          tests/test_preflight.py::test_extract_candidates_with_real_sprintctl_payloads
