@@ -448,6 +448,45 @@ def test_cli_review_list_json_empty(runner):
     assert json.loads(result.output) == []
 
 
+def test_cli_review_show_json_output(sc_db_path, kctl_conn, runner):
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {
+            "summary": "Show JSON candidate",
+            "tags": ["claims"],
+            "mode": "rotate",
+            "from_identity": {"actor": "bot-1"},
+            "to_identity": {"actor": "bot-2"},
+            "git_branch": "feat/claims",
+            "git_sha": "deadbeef",
+        },
+        source_type="system",
+        actor="bot-1",
+        created_at="2026-03-27T10:30:00Z",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+
+    row = _db.list_candidates(kctl_conn, status="candidate")[0]
+    result = runner.invoke(
+        cli,
+        ["review", "show", "--id", str(row["id"]), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["id"] == row["id"]
+    assert data["candidate_kind"] == "coordination"
+    assert data["source_type"] == "system"
+    assert data["source_actor"] == "bot-1"
+    assert data["tags"] == ["claims"]
+    assert data["provenance"]["git_branch"] == "feat/claims"
+    assert data["provenance"]["git_sha"] == "deadbeef"
+    assert data["coordination_context"]["mode"] == "rotate"
+    assert data["coordination_context"]["to_identity"]["actor"] == "bot-2"
+
+
 # ---------------------------------------------------------------------------
 # source_track flows through extract → publish → entry
 # ---------------------------------------------------------------------------

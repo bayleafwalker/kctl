@@ -67,6 +67,32 @@ def _extract_coordination_context(raw: str | None) -> dict:
     return {key: payload[key] for key in keys if payload.get(key) is not None}
 
 
+def _candidate_json(c: dict) -> dict:
+    return {
+        "id": c["id"],
+        "status": c["status"],
+        "candidate_kind": c.get("candidate_kind", "durable"),
+        "event_type": c["event_type"],
+        "summary": c["summary"],
+        "detail": c.get("detail"),
+        "tags": json.loads(c.get("tags") or "[]"),
+        "source_sprint_id": c["source_sprint_id"],
+        "source_track": c.get("source_track"),
+        "source_item_id": c.get("source_item_id"),
+        "source_actor": c.get("source_actor"),
+        "source_type": c.get("source_type"),
+        "source_created_at": c.get("source_created_at"),
+        "source_payload": _decode_json_field(c.get("source_payload")),
+        "provenance": _extract_provenance(c.get("source_payload")),
+        "coordination_context": _extract_coordination_context(c.get("source_payload")),
+        "confidence": c.get("confidence"),
+        "extracted_at": c.get("extracted_at"),
+        "reviewed_at": c.get("reviewed_at"),
+        "reviewed_by": c.get("reviewed_by"),
+        "review_notes": c.get("review_notes"),
+    }
+
+
 def _print_candidate(c: dict) -> None:
     tags = _format_tags(c.get("tags"))
     click.echo(
@@ -226,26 +252,7 @@ def review_list(obj, status, kind, tag, sprint_id, output_json) -> None:
     )
 
     if output_json:
-        rows = [
-            {
-                "id": c["id"],
-                "status": c["status"],
-                "candidate_kind": c.get("candidate_kind", "durable"),
-                "event_type": c["event_type"],
-                "summary": c["summary"],
-                "tags": json.loads(c.get("tags") or "[]"),
-                "source_sprint_id": c["source_sprint_id"],
-                "source_track": c.get("source_track"),
-                "source_actor": c.get("source_actor"),
-                "source_type": c.get("source_type"),
-                "source_created_at": c.get("source_created_at"),
-                "source_payload": _decode_json_field(c.get("source_payload")),
-                "provenance": _extract_provenance(c.get("source_payload")),
-                "coordination_context": _extract_coordination_context(c.get("source_payload")),
-                "confidence": c.get("confidence"),
-            }
-            for c in candidates
-        ]
+        rows = [_candidate_json(c) for c in candidates]
         click.echo(json.dumps(rows))
         return
 
@@ -261,14 +268,19 @@ def review_list(obj, status, kind, tag, sprint_id, output_json) -> None:
 
 @review_group.command("show")
 @click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def review_show(obj, candidate_id) -> None:
+def review_show(obj, candidate_id, output_json) -> None:
     """Show a candidate in detail."""
     conn = obj["conn"]
     c = _db.get_candidate(conn, candidate_id)
     if c is None:
         click.echo(f"Candidate #{candidate_id} not found.", err=True)
         sys.exit(1)
+
+    if output_json:
+        click.echo(json.dumps(_candidate_json(c)))
+        return
 
     click.echo(f"Candidate #{c['id']}")
     click.echo(f"  Status:      {c['status']}")
