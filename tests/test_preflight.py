@@ -177,3 +177,16 @@ def test_cli_preflight_json_warnings_are_structured(monkeypatch, sc_db_path, run
     assert payload["ok"] is False
     assert payload["warnings"] == [warning]
     assert payload["sprint_id"] is None
+
+
+def test_cli_preflight_json_missing_db_reports_error(runner, tmp_path):
+    missing = tmp_path / "missing-sprintctl.db"
+    result = runner.invoke(
+        cli,
+        ["preflight", "--sprintctl-db", str(missing), "--json"],
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["warnings"] == []
+    assert "not found" in payload["error"]

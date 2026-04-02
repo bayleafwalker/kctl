@@ -291,6 +291,20 @@ def test_cli_render_json_empty(runner):
     assert data["entries"] == []
 
 
+def test_cli_render_json_to_file(sc_db_path, kctl_conn, runner, tmp_path):
+    cid = _seed_approved(sc_db_path, kctl_conn, "JSON file render")
+    _publish.publish_candidate(
+        kctl_conn, cid, "Entry", "Body", "lesson", '["docs"]', NOW2,
+    )
+    out_file = tmp_path / "kb.json"
+    result = runner.invoke(cli, ["render", "--json", "--output", str(out_file)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(out_file.read_text())
+    assert payload["count"] == 1
+    assert payload["entries"][0]["title"] == "Entry"
+    assert payload["entries"][0]["tags"] == ["docs"]
+
+
 def test_cli_render_shows_superseded_entry_link(sc_db_path, kctl_conn, runner):
     old_cid = _seed_approved(sc_db_path, kctl_conn, "Old decision")
     old_entry = _publish.publish_candidate(
@@ -511,6 +525,14 @@ def test_cli_review_show_json_output(sc_db_path, kctl_conn, runner):
     assert data["provenance"]["git_sha"] == "deadbeef"
     assert data["coordination_context"]["mode"] == "rotate"
     assert data["coordination_context"]["to_identity"]["actor"] == "bot-2"
+
+
+def test_cli_review_show_json_not_found(runner):
+    result = runner.invoke(cli, ["review", "show", "--id", "9999", "--json"])
+    assert result.exit_code != 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert "not found" in payload["error"]
 
 
 # ---------------------------------------------------------------------------

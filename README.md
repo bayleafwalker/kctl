@@ -206,6 +206,11 @@ Review supports only `approve` and `reject`. Status transitions are enforced:
 - extracted provenance fields such as `git_branch`, `git_sha`, `evidence_item_id`, and `evidence_event_id`
 - parsed coordination context such as `mode`, `reason`, `from_identity`, and `to_identity`
 
+`kctl review show --json` returns one object with candidate fields, plus:
+- `provenance` (parsed VCS/evidence fields from payload)
+- `coordination_context` (parsed handoff/claim context)
+- `source_payload` (decoded payload object when JSON)
+
 ### Publish
 
 ```sh
@@ -239,6 +244,11 @@ kctl render --output knowledge.md        # write to file
 ```
 
 Renders published durable knowledge entries as structured markdown, grouped by category. Each entry shows its source track and sprint container. Superseded entries are annotated. Coordination candidates never appear in rendered output.
+
+`kctl render --json` returns:
+- `project`, `generated_at`, and `filters`
+- `count` and `counts_by_category`
+- `entries` with title/body/category/tags plus source sprint and track fields
 
 The document header uses `KCTL_PROJECT` and defaults to `homelab-analytics` if unset.
 
@@ -285,7 +295,11 @@ kctl preflight --json
 Runs sprintctl's own stale-item diagnostics and reports warnings before extraction. This follows sprintctl's current semantics, including `SPRINTCTL_STALE_THRESHOLD` and `SPRINTCTL_PENDING_STALE_THRESHOLD`, instead of maintaining a separate SQL shadow in kctl.
 
 `kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Warnings do not block extraction.
-`kctl preflight --json` emits a structured payload with `ok`, `sprint_id`, and `warnings`.
+`kctl preflight --json` emits a structured payload with:
+- `ok` (boolean)
+- `sprint_id`
+- `warnings` (array)
+- `error` (`null` on success/warnings; string on hard failures such as missing DB/schema mismatch)
 
 ## Architecture
 

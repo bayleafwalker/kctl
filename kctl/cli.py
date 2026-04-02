@@ -298,7 +298,17 @@ def review_show(obj, candidate_id, output_json) -> None:
     conn = obj["conn"]
     c = _db.get_candidate(conn, candidate_id)
     if c is None:
-        click.echo(f"Candidate #{candidate_id} not found.", err=True)
+        if output_json:
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": f"Candidate #{candidate_id} not found.",
+                    }
+                )
+            )
+        else:
+            click.echo(f"Candidate #{candidate_id} not found.", err=True)
         sys.exit(1)
 
     if output_json:
@@ -645,7 +655,16 @@ def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
     sc_db_path = Path(sprintctl_db) if sprintctl_db else _extract.get_sprintctl_db_path()
     if not sc_db_path.exists():
         if output_json:
-            click.echo(json.dumps({"ok": False, "error": f"sprintctl DB not found at {sc_db_path}"}))
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "sprint_id": sprint_id,
+                        "warnings": [],
+                        "error": f"sprintctl DB not found at {sc_db_path}",
+                    }
+                )
+            )
         else:
             click.echo(f"Error: sprintctl DB not found at {sc_db_path}", err=True)
         sys.exit(1)
@@ -655,7 +674,16 @@ def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
         _db.validate_sprintctl_schema(sc_conn)
     except Exception as exc:
         if output_json:
-            click.echo(json.dumps({"ok": False, "error": str(exc)}))
+            click.echo(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "sprint_id": sprint_id,
+                        "warnings": [],
+                        "error": str(exc),
+                    }
+                )
+            )
         else:
             click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
@@ -674,6 +702,7 @@ def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
                     "ok": not warnings,
                     "sprint_id": sprint_id,
                     "warnings": warnings,
+                    "error": None,
                 }
             )
         )
