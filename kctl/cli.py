@@ -34,9 +34,45 @@ def _decode_json_field(raw: str | None):
         return raw
 
 
+def _payload_dict(raw: str | None) -> dict:
+    payload = _decode_json_field(raw)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _extract_provenance(raw: str | None) -> dict:
+    payload = _payload_dict(raw)
+    keys = (
+        "evidence_item_id",
+        "evidence_event_id",
+        "git_branch",
+        "git_sha",
+        "git_worktree",
+    )
+    return {key: payload[key] for key in keys if payload.get(key) is not None}
+
+
+def _extract_coordination_context(raw: str | None) -> dict:
+    payload = _payload_dict(raw)
+    keys = (
+        "operation",
+        "mode",
+        "reason",
+        "legacy_adopted",
+        "token_rotated",
+        "from_identity",
+        "to_identity",
+        "claim",
+        "attempted_by",
+    )
+    return {key: payload[key] for key in keys if payload.get(key) is not None}
+
+
 def _print_candidate(c: dict) -> None:
     tags = _format_tags(c.get("tags"))
-    click.echo(f"  #{c['id']:>4}  [{c['status']:>9}]  {c['event_type']:20}  {c['summary']}")
+    click.echo(
+        f"  #{c['id']:>4}  [{c['status']:>9}]  "
+        f"[{c.get('candidate_kind', 'durable'):>12}]  {c['event_type']:20}  {c['summary']}"
+    )
     if tags:
         click.echo(f"           tags: {tags}")
 
@@ -63,7 +99,10 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--event-types",
     default=None,
-    help="Comma-separated event types to extract (default: decision,blocker-resolved,pattern-noted,risk-accepted,lesson-learned)",
+    help=(
+        "Comma-separated event types to extract "
+        "(default: KCTL_EVENT_TYPES env var or built-in durable + coordination set)"
+    ),
 )
 @click.option(
     "--sprintctl-db",
@@ -95,16 +134,22 @@ def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, no_preflight) -
         sys.exit(1)
 
     if not no_preflight:
-        warnings = _extract.run_preflight(sc_conn)
+        warnings = _extract.run_preflight(
+            sc_conn,
+            sprint_id=sprint_id,
+            sprintctl_db_path=sc_db_path,
+        )
         for w in warnings:
             click.echo(f"Warning: {w}", err=True)
 
-    event_type_set = (
-        set(event_types.split(",")) if event_types
-        else _extract.DEFAULT_EVENT_TYPES
-    )
+    try:
+        event_type_set = _extract.resolve_event_types(event_types)
+    except ValueError as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
 
-    state = _db.get_extractor_state(kctl_conn, str(sc_db_path))
+    scope_key = _extract.build_scope_key(event_type_set, sprint_id)
+    state = _db.get_extractor_state(kctl_conn, str(sc_db_path), scope_key=scope_key)
     since_event_id = 0 if full or state is None else state["last_event_id"]
 
     created, structured_count = _extract.extract_candidates(
@@ -120,17 +165,25 @@ def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, no_preflight) -
 
     total = len(created)
     bare_count = total - structured_count
+    durable_count = sum(1 for row in created if row.get("candidate_kind") == "durable")
+    coordination_count = total - durable_count
     if total == 0:
         click.echo("Extracted 0 new candidates.")
-    elif bare_count == 0:
-        click.echo(f"Extracted {total} candidate(s) ({structured_count} with structured payloads).")
     else:
         click.echo(
             f"Extracted {total} candidate(s) "
-            f"({structured_count} with structured payloads, {bare_count} from bare event)."
+            f"({structured_count} with structured payloads, {bare_count} from bare event, "
+            f"{durable_count} durable, {coordination_count} coordination)."
         )
-    pending = len(_db.list_candidates(kctl_conn, status="candidate"))
-    click.echo(f"{pending} candidate(s) awaiting review.")
+    pending_durable = len(
+        _db.list_candidates(kctl_conn, status="candidate", candidate_kind="durable")
+    )
+    pending_coordination = len(
+        _db.list_candidates(kctl_conn, status="candidate", candidate_kind="coordination")
+    )
+    click.echo(f"{pending_durable} durable candidate(s) awaiting review.")
+    if pending_coordination:
+        click.echo(f"{pending_coordination} coordination candidate(s) awaiting review.")
 
 
 # ---------------------------------------------------------------------------
@@ -149,21 +202,35 @@ def review_group() -> None:
     type=click.Choice(["candidate", "approved", "rejected", "published", "all"]),
     help="Filter by status (default: candidate)",
 )
+@click.option(
+    "--kind",
+    default="durable",
+    type=click.Choice(["durable", "coordination", "all"]),
+    help="Filter by candidate stream (default: durable)",
+)
 @click.option("--tag", default=None, help="Filter by tag")
 @click.option("--sprint-id", type=int, default=None, help="Filter by source sprint ID")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def review_list(obj, status, tag, sprint_id, output_json) -> None:
+def review_list(obj, status, kind, tag, sprint_id, output_json) -> None:
     """List candidates."""
     conn = obj["conn"]
     effective_status = None if status == "all" else status
-    candidates = _db.list_candidates(conn, status=effective_status, tag=tag, sprint_id=sprint_id)
+    effective_kind = None if kind == "all" else kind
+    candidates = _db.list_candidates(
+        conn,
+        status=effective_status,
+        tag=tag,
+        sprint_id=sprint_id,
+        candidate_kind=effective_kind,
+    )
 
     if output_json:
         rows = [
             {
                 "id": c["id"],
                 "status": c["status"],
+                "candidate_kind": c.get("candidate_kind", "durable"),
                 "event_type": c["event_type"],
                 "summary": c["summary"],
                 "tags": json.loads(c.get("tags") or "[]"),
@@ -173,6 +240,8 @@ def review_list(obj, status, tag, sprint_id, output_json) -> None:
                 "source_type": c.get("source_type"),
                 "source_created_at": c.get("source_created_at"),
                 "source_payload": _decode_json_field(c.get("source_payload")),
+                "provenance": _extract_provenance(c.get("source_payload")),
+                "coordination_context": _extract_coordination_context(c.get("source_payload")),
                 "confidence": c.get("confidence"),
             }
             for c in candidates
@@ -184,8 +253,8 @@ def review_list(obj, status, tag, sprint_id, output_json) -> None:
         click.echo("No candidates found.")
         return
 
-    click.echo(f"{'ID':>6}  {'Status':>9}  {'Event type':20}  Summary")
-    click.echo("-" * 80)
+    click.echo(f"{'ID':>6}  {'Status':>9}  {'Kind':>12}  {'Event type':20}  Summary")
+    click.echo("-" * 96)
     for c in candidates:
         _print_candidate(c)
 
@@ -203,6 +272,7 @@ def review_show(obj, candidate_id) -> None:
 
     click.echo(f"Candidate #{c['id']}")
     click.echo(f"  Status:      {c['status']}")
+    click.echo(f"  Kind:        {c.get('candidate_kind', 'durable')}")
     click.echo(f"  Event type:  {c['event_type']}")
     click.echo(f"  Source type: {c.get('source_type') or '(none)'}")
     click.echo(f"  Source by:   {c.get('source_actor') or '(none)'}")
@@ -215,6 +285,12 @@ def review_show(obj, candidate_id) -> None:
     click.echo(f"  Confidence:  {c['confidence'] or '(none)'}")
     click.echo(f"  Sprint:      {c['source_sprint_id']} (container ref)")
     click.echo(f"  Extracted:   {c['extracted_at']}")
+    provenance = _extract_provenance(c.get("source_payload"))
+    if provenance:
+        click.echo(f"  Provenance:  {json.dumps(provenance)}")
+    coordination_context = _extract_coordination_context(c.get("source_payload"))
+    if coordination_context:
+        click.echo(f"  Coordination:{json.dumps(coordination_context)}")
     if c.get("source_payload"):
         click.echo(f"  Source payload: {json.dumps(_decode_json_field(c['source_payload']))}")
     if c.get("reviewed_at"):
@@ -226,16 +302,17 @@ def review_show(obj, candidate_id) -> None:
 @review_group.command("approve")
 @click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID")
 @click.option("--title", default=None, help="Override summary/title")
+@click.option("--detail", default=None, help="Override detail/body draft")
 @click.option("--tags", default=None, help='Override tags as JSON array, e.g. \'["auth","lessons"]\'')
 @click.option("--reviewer", default="human", help="Reviewer identifier")
 @click.pass_obj
-def review_approve(obj, candidate_id, title, tags, reviewer) -> None:
+def review_approve(obj, candidate_id, title, detail, tags, reviewer) -> None:
     """Approve a candidate."""
     conn = obj["conn"]
     try:
         updated = _review.approve_candidate(
             conn, candidate_id=candidate_id, now=_now(),
-            reviewed_by=reviewer, title=title, tags=tags,
+            reviewed_by=reviewer, title=title, detail=detail, tags=tags,
         )
     except ValueError as exc:
         click.echo(f"Error: {exc}", err=True)
@@ -273,6 +350,7 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
 @click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID to publish")
 @click.option("--title", default=None, help="Entry title (defaults to candidate summary)")
 @click.option("--body", required=True, help="Full knowledge body / detail text")
+@click.option("--supersedes", "supersedes_entry_id", type=int, default=None, help="Mark an older entry as superseded by this new entry")
 @click.option(
     "--category",
     required=True,
@@ -281,8 +359,8 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
 )
 @click.option("--tags", default=None, help='Tags as JSON array, e.g. \'["auth","lessons"]\'')
 @click.pass_obj
-def publish_cmd(obj, candidate_id, title, body, category, tags) -> None:
-    """Promote an approved candidate to a knowledge entry."""
+def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, tags) -> None:
+    """Promote an approved durable candidate to a knowledge entry."""
     conn = obj["conn"]
     try:
         entry = _publish.publish_candidate(
@@ -292,6 +370,7 @@ def publish_cmd(obj, candidate_id, title, body, category, tags) -> None:
             body=body,
             category=category,
             tags=tags,
+            supersedes_entry_id=supersedes_entry_id,
             now=_now(),
         )
     except ValueError as exc:
@@ -356,6 +435,8 @@ def render_cmd(obj, category, tag, sprint_id, output) -> None:
                 tags_str = _format_tags(e.get("tags"))
                 if tags_str:
                     lines.append(f"Tags: {tags_str}")
+                if e.get("superseded_by"):
+                    lines.append(f"Superseded by: entry #{e['superseded_by']}")
                 lines.append("")
                 lines.append(e["body"])
                 lines.append("")
@@ -379,49 +460,109 @@ def render_cmd(obj, category, tag, sprint_id, output) -> None:
 
 @cli.command("status")
 @click.option("--sprint-id", type=int, default=None, help="Filter to one sprint")
+@click.option(
+    "--kind",
+    default="durable",
+    type=click.Choice(["durable", "coordination", "all"]),
+    help="Filter by candidate stream (default: durable)",
+)
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def status_cmd(obj, sprint_id, output_json) -> None:
+def status_cmd(obj, sprint_id, kind, output_json) -> None:
     """Show pipeline state: candidates awaiting review, approved, published."""
     conn = obj["conn"]
 
-    pending = _db.list_candidates(conn, status="candidate", sprint_id=sprint_id)
-    approved = _db.list_candidates(conn, status="approved", sprint_id=sprint_id)
-    published = _db.list_candidates(conn, status="published", sprint_id=sprint_id)
+    def _counts_for(candidate_kind: str | None) -> dict:
+        pending = _db.list_candidates(
+            conn,
+            status="candidate",
+            sprint_id=sprint_id,
+            candidate_kind=candidate_kind,
+        )
+        approved = _db.list_candidates(
+            conn,
+            status="approved",
+            sprint_id=sprint_id,
+            candidate_kind=candidate_kind,
+        )
+        published = _db.list_candidates(
+            conn,
+            status="published",
+            sprint_id=sprint_id,
+            candidate_kind=candidate_kind,
+        )
+        return {
+            "pending": pending,
+            "approved": approved,
+            "published": published,
+        }
+
+    grouped = {
+        "durable": _counts_for("durable"),
+        "coordination": _counts_for("coordination"),
+    }
+    selected = (
+        grouped[kind]
+        if kind in grouped
+        else {
+            "pending": grouped["durable"]["pending"] + grouped["coordination"]["pending"],
+            "approved": grouped["durable"]["approved"] + grouped["coordination"]["approved"],
+            "published": grouped["durable"]["published"] + grouped["coordination"]["published"],
+        }
+    )
 
     if output_json:
-        payload = {
-            "sprint_id": sprint_id,
-            "counts": {
-                "candidate": len(pending),
-                "approved": len(approved),
-                "published": len(published),
-            },
-            "approved": [
-                {
-                    "id": c["id"],
-                    "summary": c["summary"],
-                    "event_type": c["event_type"],
-                    "source_track": c.get("source_track"),
-                    "source_sprint_id": c["source_sprint_id"],
+        payload = {"sprint_id": sprint_id, "kind": kind}
+        if kind == "all":
+            payload["counts_by_kind"] = {
+                candidate_kind: {
+                    "candidate": len(rows["pending"]),
+                    "approved": len(rows["approved"]),
+                    "published": len(rows["published"]),
                 }
-                for c in approved
-            ],
+                for candidate_kind, rows in grouped.items()
+            }
+        payload["counts"] = {
+            "candidate": len(selected["pending"]),
+            "approved": len(selected["approved"]),
+            "published": len(selected["published"]),
         }
+        payload["approved"] = [
+            {
+                "id": c["id"],
+                "candidate_kind": c.get("candidate_kind", "durable"),
+                "summary": c["summary"],
+                "event_type": c["event_type"],
+                "source_track": c.get("source_track"),
+                "source_sprint_id": c["source_sprint_id"],
+            }
+            for c in selected["approved"]
+        ]
         click.echo(json.dumps(payload))
         return
 
     scope = f" (sprint {sprint_id})" if sprint_id else ""
     click.echo(f"Pipeline status{scope}:")
-    click.echo(f"  {len(pending):>4}  awaiting review  (candidate)")
-    click.echo(f"  {len(approved):>4}  approved, pending publish")
-    click.echo(f"  {len(published):>4}  published")
+    if kind == "all":
+        for candidate_kind in ("durable", "coordination"):
+            rows = grouped[candidate_kind]
+            click.echo(f"  {candidate_kind.capitalize()}:")
+            click.echo(f"    {len(rows['pending']):>4}  awaiting review  (candidate)")
+            click.echo(f"    {len(rows['approved']):>4}  approved, pending publish")
+            click.echo(f"    {len(rows['published']):>4}  published")
+    else:
+        click.echo(f"  Stream: {kind}")
+        click.echo(f"  {len(selected['pending']):>4}  awaiting review  (candidate)")
+        click.echo(f"  {len(selected['approved']):>4}  approved, pending publish")
+        click.echo(f"  {len(selected['published']):>4}  published")
 
-    if approved:
+    if selected["approved"]:
         click.echo("")
         click.echo("Approved (ready to publish):")
-        for c in approved:
-            click.echo(f"  #{c['id']:>4}  {c['summary']}")
+        for c in selected["approved"]:
+            click.echo(
+                f"  #{c['id']:>4}  [{c.get('candidate_kind', 'durable')}]  {c['summary']}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -434,8 +575,9 @@ def status_cmd(obj, sprint_id, output_json) -> None:
     default=None,
     help="Path to sprintctl DB",
 )
+@click.option("--sprint-id", type=int, default=None, help="Scope check to one sprint")
 @click.pass_obj
-def preflight_cmd(obj, sprintctl_db) -> None:
+def preflight_cmd(obj, sprintctl_db, sprint_id) -> None:
     """Run sprintctl maintain check and report results."""
     sc_db_path = Path(sprintctl_db) if sprintctl_db else _extract.get_sprintctl_db_path()
     if not sc_db_path.exists():
@@ -449,7 +591,11 @@ def preflight_cmd(obj, sprintctl_db) -> None:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    warnings = _extract.run_preflight(sc_conn)
+    warnings = _extract.run_preflight(
+        sc_conn,
+        sprint_id=sprint_id,
+        sprintctl_db_path=sc_db_path,
+    )
     sc_conn.close()
 
     if warnings:

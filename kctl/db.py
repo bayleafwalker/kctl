@@ -10,6 +10,19 @@ VALID_CANDIDATE_TRANSITIONS: dict[str, set[str]] = {
     "published": set(),
 }
 
+DEFAULT_EXTRACT_SCOPE_KEY = (
+    "scope:v1|sprint=*|events="
+    "blocker-resolved,claim-ambiguity-detected,claim-handoff,"
+    "claim-ownership-corrected,coordination-failure,decision,"
+    "lesson-learned,pattern-noted,risk-accepted"
+)
+COORDINATION_EVENT_TYPES = {
+    "claim-handoff",
+    "claim-ownership-corrected",
+    "claim-ambiguity-detected",
+    "coordination-failure",
+}
+
 _MIGRATIONS: list[str] = [
     # Migration 1: initial schema (Phase 1 + Phase 2 tables pre-created)
     """
@@ -62,6 +75,39 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE knowledge_candidate ADD COLUMN source_type TEXT;
     ALTER TABLE knowledge_candidate ADD COLUMN source_created_at TEXT;
     ALTER TABLE knowledge_candidate ADD COLUMN source_payload TEXT
+    """,
+    # Migration 4: extractor state must be scoped by extraction filter to avoid
+    # filtered runs advancing a single global watermark incorrectly.
+    f"""
+    CREATE TABLE IF NOT EXISTS extractor_state_v2 (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        sprintctl_db_path  TEXT    NOT NULL,
+        scope_key          TEXT    NOT NULL,
+        last_event_id      INTEGER NOT NULL DEFAULT 0,
+        last_run_at        TEXT    NOT NULL,
+        UNIQUE (sprintctl_db_path, scope_key)
+    );
+
+    INSERT OR IGNORE INTO extractor_state_v2
+        (sprintctl_db_path, scope_key, last_event_id, last_run_at)
+    SELECT sprintctl_db_path, '{DEFAULT_EXTRACT_SCOPE_KEY}', last_event_id, last_run_at
+    FROM extractor_state
+    """,
+    # Migration 5: durable knowledge and coordination items are reviewed
+    # separately; backfill existing rows from event_type.
+    """
+    ALTER TABLE knowledge_candidate ADD COLUMN candidate_kind TEXT NOT NULL DEFAULT 'durable';
+
+    UPDATE knowledge_candidate
+    SET candidate_kind = CASE
+        WHEN event_type IN (
+            'claim-handoff',
+            'claim-ownership-corrected',
+            'claim-ambiguity-detected',
+            'coordination-failure'
+        ) THEN 'coordination'
+        ELSE 'durable'
+    END
     """,
 ]
 
@@ -125,8 +171,8 @@ def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int | None:
         INSERT OR IGNORE INTO knowledge_candidate
             (source_event_id, source_sprint_id, source_item_id, source_track,
              source_actor, source_type, source_created_at, source_payload,
-             event_type, summary, detail, tags, confidence, status, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
+             event_type, candidate_kind, summary, detail, tags, confidence, status, extracted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
         """,
         (
             candidate["source_event_id"],
@@ -138,6 +184,7 @@ def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int | None:
             candidate.get("source_created_at"),
             candidate.get("source_payload"),
             candidate["event_type"],
+            candidate.get("candidate_kind", "durable"),
             candidate["summary"],
             candidate.get("detail"),
             candidate.get("tags", "[]"),
@@ -161,6 +208,7 @@ def list_candidates(
     status: str | None = "candidate",
     tag: str | None = None,
     sprint_id: int | None = None,
+    candidate_kind: str | None = None,
 ) -> list[dict]:
     where_clauses = []
     params: list = []
@@ -171,6 +219,9 @@ def list_candidates(
     if sprint_id is not None:
         where_clauses.append("source_sprint_id = ?")
         params.append(sprint_id)
+    if candidate_kind is not None:
+        where_clauses.append("candidate_kind = ?")
+        params.append(candidate_kind)
 
     query = "SELECT * FROM knowledge_candidate"
     if where_clauses:
@@ -297,10 +348,17 @@ def list_entries(
 
 # --- ExtractorState ---
 
-def get_extractor_state(conn: sqlite3.Connection, sprintctl_db_path: str) -> dict | None:
+def get_extractor_state(
+    conn: sqlite3.Connection,
+    sprintctl_db_path: str,
+    scope_key: str,
+) -> dict | None:
     row = conn.execute(
-        "SELECT * FROM extractor_state WHERE sprintctl_db_path = ?",
-        (sprintctl_db_path,),
+        """
+        SELECT * FROM extractor_state_v2
+        WHERE sprintctl_db_path = ? AND scope_key = ?
+        """,
+        (sprintctl_db_path, scope_key),
     ).fetchone()
     return dict(row) if row else None
 
@@ -308,18 +366,47 @@ def get_extractor_state(conn: sqlite3.Connection, sprintctl_db_path: str) -> dic
 def update_extractor_state(
     conn: sqlite3.Connection,
     sprintctl_db_path: str,
+    scope_key: str,
     last_event_id: int,
     last_run_at: str,
 ) -> None:
     conn.execute(
         """
-        INSERT INTO extractor_state (sprintctl_db_path, last_event_id, last_run_at)
-        VALUES (?, ?, ?)
-        ON CONFLICT(sprintctl_db_path) DO UPDATE SET
+        INSERT INTO extractor_state_v2 (sprintctl_db_path, scope_key, last_event_id, last_run_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(sprintctl_db_path, scope_key) DO UPDATE SET
             last_event_id = excluded.last_event_id,
             last_run_at   = excluded.last_run_at
         """,
-        (sprintctl_db_path, last_event_id, last_run_at),
+        (sprintctl_db_path, scope_key, last_event_id, last_run_at),
+    )
+    conn.commit()
+
+
+def set_entry_superseded_by(
+    conn: sqlite3.Connection,
+    entry_id: int,
+    superseded_by: int,
+) -> None:
+    if entry_id == superseded_by:
+        raise ValueError("An entry cannot supersede itself")
+
+    entry = get_entry(conn, entry_id)
+    if entry is None:
+        raise ValueError(f"Entry #{entry_id} not found")
+
+    successor = get_entry(conn, superseded_by)
+    if successor is None:
+        raise ValueError(f"Entry #{superseded_by} not found")
+
+    if entry.get("superseded_by") and entry["superseded_by"] != superseded_by:
+        raise ValueError(
+            f"Entry #{entry_id} is already superseded by entry #{entry['superseded_by']}"
+        )
+
+    conn.execute(
+        "UPDATE knowledge_entry SET superseded_by = ? WHERE id = ?",
+        (superseded_by, entry_id),
     )
     conn.commit()
 

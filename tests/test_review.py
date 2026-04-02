@@ -44,6 +44,17 @@ def test_approve_allows_tags_override(sc_db_path, kctl_conn):
     assert json.loads(updated["tags"]) == ["auth", "lessons"]
 
 
+def test_approve_allows_detail_override(sc_db_path, kctl_conn):
+    cid = _seed_candidate(sc_db_path, kctl_conn)
+    updated = _review.approve_candidate(
+        kctl_conn,
+        cid,
+        now=NOW2,
+        detail="Expanded durable detail",
+    )
+    assert updated["detail"] == "Expanded durable detail"
+
+
 def test_approve_rejects_invalid_tags_json(sc_db_path, kctl_conn):
     cid = _seed_candidate(sc_db_path, kctl_conn)
     with pytest.raises(ValueError, match="Invalid tags JSON"):
@@ -125,3 +136,21 @@ def test_list_candidates_tag_filter(sc_db_path, kctl_conn):
     auth_tagged = _db.list_candidates(kctl_conn, status="candidate", tag="auth")
     assert len(auth_tagged) == 1
     assert auth_tagged[0]["summary"] == "Auth decision"
+
+
+def test_list_candidates_kind_filter(sc_db_path, kctl_conn):
+    add_event(sc_db_path, "decision", {"summary": "Durable"})
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {"summary": "Coordination", "tags": ["claims"]},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+
+    durable = _db.list_candidates(kctl_conn, status="candidate", candidate_kind="durable")
+    coordination = _db.list_candidates(kctl_conn, status="candidate", candidate_kind="coordination")
+    assert [row["summary"] for row in durable] == ["Durable"]
+    assert [row["summary"] for row in coordination] == ["Coordination"]

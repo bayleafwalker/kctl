@@ -1,81 +1,84 @@
 # kctl
 
-A local-first knowledge promotion and backlog-seeding CLI for a single developer working through [sprintctl](https://github.com/bayleafwalker/sprintctl) sprints.
+A local-first reader and review CLI for [sprintctl](https://github.com/bayleafwalker/sprintctl) event streams.
 
-kctl recovers durable knowledge from execution — decisions, patterns, resolved blockers, lessons — reviews it, promotes it to a committed knowledge base, and makes it available to seed future work items and tracks.
+kctl extracts two distinct streams from execution:
+- durable knowledge that can be reviewed, published, and rendered into a committed knowledge base
+- handoff and coordination items that remain reviewable but separate from durable knowledge
 
 ## What kctl is
 
-- A tool for one developer (or one sparse agentic session at a time)
-- A consumer of sprintctl event streams (read-only)
-- A review-gated pipeline: candidate → approved → published → rendered markdown
-- A source of structured backlog seeds derived from reviewed knowledge
+- A tool for one developer or one sparse agentic session at a time
+- A read-only consumer of sprintctl events, work items, and sprint context
+- A review surface that separates durable knowledge from coordination items
+- A durable knowledge pipeline: `candidate -> approved -> published -> rendered markdown`
+- A producer of local artifacts and machine-readable outputs that agents can use when deciding sprintctl actions
 - Local-first: SQLite on disk, convergence through committed markdown
 
 ## What kctl is not
 
+- Not a sprint or backlog writer
+- Not a direct sprint seeding tool
+- Not a replacement for sprintctl's write-side command surface
 - Not a wiki, search engine, or documentation generator
-- Not a multi-team or enterprise knowledge management platform
-- Not a replacement for structured docs (ADRs, runbooks, READMEs)
 - Not a hosted service or remote knowledge store
 - Not optimised for concurrent contributors across machines
 
+## Two streams
+
+kctl keeps these streams separate:
+
+| Stream | Source examples | Reviewable | Publishable | Rendered |
+|---|---|---:|---:|---:|
+| `durable` | `decision`, `pattern-noted`, `lesson-learned`, `risk-accepted`, `blocker-resolved` | yes | yes | yes |
+| `coordination` | `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure` | yes | no | no |
+
+Coordination items stay visible for audit and handoff analysis, but they do not become durable knowledge entries.
+
 ## The lifecycle
 
-```
+```text
 sprintctl events
-      │
-      ▼
-  kctl extract          — scan knowledge-bearing events, create candidates
-      │
-      ▼
-  kctl review list      — inspect candidates
-  kctl review approve   — approve (optionally edit title/tags)
-  kctl review reject    — discard
-      │
-      ▼
-  kctl publish          — promote approved candidate → knowledge entry (add body + category)
-      │
-      ▼
-  kctl render           — emit knowledge.md, committed alongside sprint.md
-      │
-      ▼
-  future work           — reviewed knowledge seeds new tracks and work items
+      |
+      v
+kctl extract
+      |
+      +--> durable candidates ------> review ------> publish ------> render knowledge.md
+      |
+      +--> coordination candidates -> review ------> audit / agent context only
+      |
+      v
+agents read kctl artifacts and choose sprintctl actions
 ```
 
-**Three distinct states:**
+## Acting on kctl artifacts
 
-| State | Meaning |
-|---|---|
-| `candidate` | Extracted from a sprintctl event; not yet reviewed |
-| `approved` | Reviewed and accepted; waiting for a body to be written before publishing |
-| `published` | Promoted to a `knowledge_entry`; included in rendered output |
+kctl never writes back into sprintctl. sprintctl remains the only tool that owns backlog and sprint mutation.
 
-Rejected candidates are retained for audit but excluded from all outputs.
+The intended loop is:
 
-## Backlog seeding
+1. Extract and review what mattered during execution.
+2. Publish durable knowledge and render `knowledge.md`.
+3. Use `kctl status --json`, `kctl review list --json`, or rendered markdown to decide what matters next.
+4. Have an agent or operator invoke the appropriate sprintctl commands.
 
-The primary reason to maintain a knowledge base is to inform future work. After a sprint closes:
-
-1. Run `kctl render --output knowledge.md` and commit it.
-2. When opening the next sprint in sprintctl, use `knowledge.md` (or `kctl render --category decision --sprint-id N`) as reference.
-3. Decisions, patterns, and risks surfaced during execution become concrete inputs for new tracks and work items — not sprint ceremony, just execution context for what to do next.
-
-For agentic sessions, use machine-readable outputs instead of markdown prose:
+Example artifact surfaces for agents:
 
 ```sh
-kctl status --json                         # pipeline counts + approved list with source context
-kctl review list --status approved --json  # approved candidates ready to publish
-kctl render --sprint-id N                  # knowledge from a specific sprint
+kctl status --json                                  # durable pipeline state by default
+kctl status --kind all --json                       # durable + coordination counts separated
+kctl review list --status approved --json           # approved durable candidates ready to publish
+kctl review list --kind coordination --json         # coordination review stream
+kctl render --sprint-id N                           # durable knowledge from one sprint
 ```
 
-An agent shaping new work items can read `kctl status --json`, inspect approved entries (including source track and sprint), and turn them into sprintctl work items without parsing markdown.
+An agent shaping sprint work can read kctl artifacts, inspect source track, sprint, provenance, and coordination context, then choose the relevant sprintctl action. kctl is the reader and reviewer; sprintctl remains the writer.
 
 ## Requirements
 
 - Python 3.11+
-- [click](https://click.palletsprojects.com/) (only non-stdlib dependency)
-- sprintctl database (for extraction; read-only access)
+- [click](https://click.palletsprojects.com/)
+- A sprintctl database with read-only access for extraction
 
 ## Installation
 
@@ -96,11 +99,16 @@ pip install -e .
 ```sh
 export KCTL_DB=/path/to/kctl.db             # default: ~/.kctl/kctl.db
 export SPRINTCTL_DB=/path/to/sprintctl.db   # default: ~/.sprintctl/sprintctl.db
-export KCTL_PROJECT=my-project              # label used in rendered output headers (default: homelab-analytics)
-export KCTL_EVENT_TYPES=decision,blocker-resolved,pattern-noted,risk-accepted,lesson-learned
+export KCTL_PROJECT=my-project              # rendered output header label
+export KCTL_EVENT_TYPES=decision,pattern-noted,lesson-learned
 ```
 
-Per-project setup — add to `.envrc`:
+If `KCTL_EVENT_TYPES` is unset, kctl extracts these defaults:
+
+- durable: `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`
+- coordination: `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure`
+
+Per-project setup in `.envrc`:
 
 ```sh
 export SPRINTCTL_DB="$PWD/.sprintctl/sprintctl.db"
@@ -118,17 +126,27 @@ Add to `.gitignore`:
 ## Quickstart
 
 ```sh
-# Extract knowledge candidates from sprintctl events
+# Extract default durable + coordination candidates
 kctl extract
 
-# Review what was found
+# Review durable candidates (default stream)
 kctl review list
 
-# Approve a candidate (optionally refine it)
-kctl review approve --id 1 --title "Use RS256 for auth tokens" --tags '["auth","architecture"]'
+# Coordination items stay available separately
+kctl review list --kind coordination
 
-# Publish the approved candidate as a knowledge entry
-kctl publish --id 1 --body "Symmetric HMAC breaks when services don't share a secret rotation schedule. Switched to RS256 after third key sync failure." --category decision
+# Approve a durable candidate and refine it
+kctl review approve \
+  --id 1 \
+  --title "Use RS256 for auth tokens" \
+  --detail "Use asymmetric verification across services." \
+  --tags '["auth","architecture"]'
+
+# Publish approved durable knowledge
+kctl publish \
+  --id 1 \
+  --body "Symmetric HMAC breaks when services don't share a secret rotation schedule. Switched to RS256 after repeated key sync failures." \
+  --category decision
 
 # Render published entries to markdown
 kctl render --output knowledge.md
@@ -140,100 +158,107 @@ git add knowledge.md
 ### Extract
 
 ```sh
-kctl extract                                            # incremental — new events only
-kctl extract --sprint-id 1                             # scope to one sprint
-kctl extract --full                                    # re-scan all events
-kctl extract --event-types decision,pattern-noted      # override event type filter
-kctl extract --no-preflight                            # skip sprintctl stale-item check
+kctl extract                                                   # incremental; default durable + coordination streams
+kctl extract --sprint-id 1                                     # scope to one sprint
+kctl extract --full                                            # re-scan the current extraction scope
+kctl extract --event-types decision,pattern-noted              # override event types
+kctl extract --no-preflight                                    # skip sprintctl stale-item check
 ```
 
-Scans sprintctl's event table for knowledge-bearing event types and creates candidates. Idempotent — re-running against the same events creates no duplicates. By default, only events newer than the last extraction are scanned (watermark in `extractor_state`).
+Scans sprintctl's event table and creates candidates. Extraction is idempotent: re-running against the same source events creates no duplicates. The extraction watermark is scoped by both `--sprint-id` and the effective event type filter, so filtered runs cannot advance a single global watermark incorrectly.
 
-**Default event types:** `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`, `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure`
+Extraction reports:
+- how many candidates carried structured payloads versus bare fallback payloads
+- how many were classified as durable versus coordination
 
-Extraction reports how many candidates had structured payloads (agent-emitted, with `summary`/`detail`/`tags` fields) vs. bare events (fallback summary derived from event type and item title). Structured payloads carry richer item-level context and need less editing at review time.
-
-Sprint is used as a container reference only — most of the meaningful execution context comes from the source work item, source track, event type, tags, source actor/source type, and the raw payload written at event time.
-
-This includes claim-ownership events emitted by sprintctl. When a session handoff, ownership correction, or coordination failure matters later, kctl preserves the structured source payload so review can still see the relevant identity context instead of only a flattened summary.
+Sprint is used as a container reference only. Most meaningful context comes from the source work item, track, event type, actor, source type, and raw payload.
 
 ### Review
 
 ```sh
-kctl review list                          # candidates awaiting review (default)
-kctl review list --status approved        # approved, pending publish
-kctl review list --status all             # all statuses
-kctl review list --tag auth               # filter by tag
-kctl review list --sprint-id 1            # filter by source sprint
-kctl review list --json                   # machine-readable output for agents
+kctl review list                                   # durable candidates awaiting review
+kctl review list --kind coordination               # coordination candidates awaiting review
+kctl review list --status approved                 # approved, pending publish
+kctl review list --status all --kind all           # all statuses across both streams
+kctl review list --tag auth                        # filter by tag
+kctl review list --sprint-id 1                     # filter by source sprint
+kctl review list --json                            # machine-readable output
 
 kctl review show --id 5
 
 kctl review approve --id 5
-kctl review approve --id 5 --title "Revised title" --tags '["auth","lessons"]'
+kctl review approve --id 5 --title "Revised title" --detail "Expanded context" --tags '["auth","lessons"]'
 kctl review reject --id 5 --reason "duplicate of #3"
 ```
 
-Approve and reject are the only mutations available from review. Status transitions are enforced:
-- `candidate → approved` or `candidate → rejected`
-- No further transitions from `rejected`
-- `approved → published` happens via `kctl publish`
+Review supports only `approve` and `reject`. Status transitions are enforced:
 
-`review show` includes source actor, source type, source timestamp, and the preserved source payload, which is especially useful for handoff and coordination events that carry nested identity details.
+- `candidate -> approved`
+- `candidate -> rejected`
+- `approved -> published` via `kctl publish`
+
+`review show` and JSON output surface:
+- source actor, source type, source timestamp, and raw payload
+- extracted provenance fields such as `git_branch`, `git_sha`, `evidence_item_id`, and `evidence_event_id`
+- parsed coordination context such as `mode`, `reason`, `from_identity`, and `to_identity`
 
 ### Publish
 
 ```sh
 kctl publish --id 5 --body "Full detail text." --category decision
 kctl publish --id 5 --title "Override title" --body "..." --category pattern --tags '["auth"]'
+kctl publish --id 7 --body "..." --category decision --supersedes 3
 ```
 
-Promotes an approved candidate to a knowledge entry. Requires `--body` and `--category`. `--title` defaults to the candidate's summary if omitted. `--tags` defaults to the candidate's tags if omitted.
+Promotes an approved durable candidate to a knowledge entry. Requires `--body` and `--category`. `--title` defaults to the candidate summary if omitted. `--tags` defaults to the candidate tags if omitted.
 
-**Categories:** `decision`, `pattern`, `lesson`, `risk`, `reference`
+Coordination candidates are not publishable.
 
-This is where the reviewed candidate gets its durable body — the actual knowledge content that will appear in rendered output and inform future work items.
+Categories:
+- `decision`
+- `pattern`
+- `lesson`
+- `risk`
+- `reference`
+
+`--supersedes` marks an older entry as superseded by the newly published one.
 
 ### Render
 
 ```sh
-kctl render                              # all published entries to stdout
+kctl render                              # all published durable entries to stdout
 kctl render --category decision          # filter by category
 kctl render --tag auth                   # filter by tag
-kctl render --sprint-id 1               # entries from a specific sprint
+kctl render --sprint-id 1                # entries from a specific sprint
 kctl render --output knowledge.md        # write to file
 ```
 
-Renders published knowledge entries as structured markdown, grouped by category (decisions, patterns, lessons, risks, references). Each entry shows its source track and sprint container. The document header uses `KCTL_PROJECT` (defaults to `homelab-analytics` if unset).
+Renders published durable knowledge entries as structured markdown, grouped by category. Each entry shows its source track and sprint container. Superseded entries are annotated. Coordination candidates never appear in rendered output.
 
-Commit the output alongside the sprint render:
-
-```sh
-kctl render --output knowledge.md
-git add knowledge.md sprint.md
-```
-
-The committed markdown is the durable record. The local kctl database is working state.
+The document header uses `KCTL_PROJECT` and defaults to `homelab-analytics` if unset.
 
 ### Status
 
 ```sh
-kctl status                              # pipeline counts across all sprints
-kctl status --sprint-id 1               # scoped to one sprint
-kctl status --json                       # machine-readable output for agents
+kctl status                              # durable pipeline counts across all sprints
+kctl status --sprint-id 1                # scope to one sprint
+kctl status --kind coordination          # coordination review state
+kctl status --kind all --json            # counts separated by stream
 ```
 
-Shows counts of candidates awaiting review, approved-but-unpublished, and published entries. Lists approved candidates by ID and summary for quick reference.
+Shows counts of candidates awaiting review, approved-but-unpublished, and published entries. By default this is the durable knowledge pipeline. `--kind coordination` scopes to coordination items, and `--kind all` returns both streams separately.
 
-JSON output format:
+Example JSON output:
 
 ```json
 {
   "sprint_id": null,
+  "kind": "durable",
   "counts": { "candidate": 2, "approved": 1, "published": 5 },
   "approved": [
     {
       "id": 3,
+      "candidate_kind": "durable",
       "summary": "Use RS256 for auth tokens",
       "event_type": "decision",
       "source_track": "backend",
@@ -247,49 +272,57 @@ JSON output format:
 
 ```sh
 kctl preflight
+kctl preflight --sprint-id 1
 kctl preflight --sprintctl-db /path/to/sprint.db
 ```
 
-Runs a stale-item check against active sprintctl sprints and reports work items with no activity beyond the configured threshold (default: 4 hours; override with `SPRINTCTL_STALE_THRESHOLD`). This runs automatically before `kctl extract` — use `--no-preflight` to skip. Warnings do not block extraction.
+Runs sprintctl's own stale-item diagnostics and reports warnings before extraction. This follows sprintctl's current semantics, including `SPRINTCTL_STALE_THRESHOLD` and `SPRINTCTL_PENDING_STALE_THRESHOLD`, instead of maintaining a separate SQL shadow in kctl.
+
+`kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Warnings do not block extraction.
 
 ## Architecture
 
-```
+```text
 kctl/
-  db.py       — schema, migrations, all data access; transition enforcement
-  extract.py  — event scanning, candidate building, idempotent insertion
-  review.py   — status transitions, validation
-  publish.py  — candidate → entry promotion
-  cli.py      — Click entry point; thin dispatch only, no business logic
+  db.py       - schema, migrations, all data access, transition enforcement
+  extract.py  - event scanning, stream classification, scoped watermarks, preflight adapter
+  review.py   - status transitions and review validation
+  publish.py  - durable candidate -> entry promotion and supersession
+  cli.py      - Click entry point plus human and JSON artifact surfaces
 tests/
-  conftest.py — shared fixtures (on-disk sprintctl-like DB, kctl test DB)
+  conftest.py
   test_extract.py
+  test_preflight.py
   test_review.py
   test_publish_render_status.py
 ```
 
-kctl owns its own SQLite database and never writes to sprintctl's. The sprintctl connection is always opened read-only.
+kctl owns its own SQLite database and never writes to sprintctl's. The sprintctl connection is always opened read-only. Durable knowledge and coordination items share extraction infrastructure but are stored and reviewed as separate streams.
 
 ## Relationship to sprintctl
 
-```
-sprintctl (owns)          kctl (reads)
-┌──────────────┐           ┌──────────────┐
-│ sprint.db    │           │ kctl.db      │
-│  sprints     │─ read ── >│  candidates  │
-│  work_items  │  only     │  entries     │
-│  events      │           │              │
-└──────────────┘           └──────────────┘
-                                  │
-                                  ▼
-                           knowledge.md   ← committed, shared
+```text
+sprintctl (owns writes)       kctl (reads + reviews)
+┌──────────────┐             ┌──────────────┐
+│ sprint.db    │             │ kctl.db      │
+│  sprints     │ -- read --> │  candidates  │
+│  work_items  │    only     │  entries     │
+│  events      │             │              │
+└──────────────┘             └──────────────┘
+                                     |
+                     ┌───────────────┴───────────────┐
+                     v                               v
+            knowledge.md / JSON            coordination review JSON
+                     |
+                     v
+            agents choose sprintctl commands
 ```
 
-sprintctl has no runtime dependency on kctl. kctl never writes to sprintctl's database. The relationship is one-way: kctl consumes the event stream that sprintctl produces as a side effect of execution. Sprint is used as a container reference; the meaningful execution signals are in the events and their associated work items and tracks.
+sprintctl owns backlog, sprint state, and all write-side actions. kctl never feeds into sprints on its own. The relationship is one-way: kctl consumes the event stream that sprintctl produces, then emits artifacts that agents or operators can use when deciding which sprintctl actions to run.
 
 ## Integration with sprintctl's envrc template
 
-For setup instructions covering both tools together — including the direnv template — see [sprintctl's CONTRIBUTING.md](https://github.com/bayleafwalker/sprintctl/blob/main/CONTRIBUTING.md). An [envrc.example](https://github.com/bayleafwalker/sprintctl/blob/main/envrc.example) in the sprintctl repo covers both `SPRINTCTL_DB` and `KCTL_DB`.
+For setup instructions covering both tools together, including the direnv template, see [sprintctl's CONTRIBUTING.md](https://github.com/bayleafwalker/sprintctl/blob/main/CONTRIBUTING.md). The sprintctl repo's `envrc.example` covers both `SPRINTCTL_DB` and `KCTL_DB`.
 
 ## Development
 

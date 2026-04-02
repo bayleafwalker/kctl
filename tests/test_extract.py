@@ -43,6 +43,7 @@ def test_build_candidate_full_payload():
     assert c["source_type"] == "actor"
     assert c["source_created_at"] == "2026-03-25T09:00:00Z"
     assert json.loads(c["source_payload"])["summary"] == "Use RS256"
+    assert c["candidate_kind"] == "durable"
     assert c["extracted_at"] == NOW
     assert structured is True
 
@@ -190,7 +191,11 @@ def test_extract_updates_extractor_state(sc_db_path, kctl_conn):
     )  # tuple return ignored here
     sc_conn.close()
 
-    state = _db.get_extractor_state(kctl_conn, str(sc_db_path))
+    state = _db.get_extractor_state(
+        kctl_conn,
+        str(sc_db_path),
+        scope_key=_extract.build_scope_key(_extract.DEFAULT_EVENT_TYPES, None),
+    )
     assert state is not None
     assert state["last_event_id"] > 0
     assert state["last_run_at"] == NOW
@@ -260,6 +265,20 @@ def test_cli_extract_full_rescans(sc_db_path, kctl_conn, runner):
     assert result.exit_code == 0, result.output
     # Should report 0 new (idempotent) but succeed
     assert "0 new candidates" in result.output
+
+
+def test_cli_extract_uses_kctl_event_types_env(sc_db_path, kctl_conn, runner):
+    add_event(sc_db_path, "decision", {"summary": "Decision"})
+    add_event(sc_db_path, "pattern-noted", {"summary": "Pattern"})
+
+    result = runner.invoke(
+        cli,
+        ["extract", "--sprintctl-db", str(sc_db_path), "--no-preflight"],
+        env={"KCTL_EVENT_TYPES": "pattern-noted"},
+    )
+    assert result.exit_code == 0, result.output
+    candidates = _db.list_candidates(kctl_conn, status="candidate")
+    assert [row["summary"] for row in candidates] == ["Pattern"]
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +381,7 @@ def test_extract_preserves_claim_handoff_identity_context(sc_db_path, kctl_conn)
 
     assert len(created) == 1
     assert created[0]["event_type"] == "claim-handoff"
+    assert created[0]["candidate_kind"] == "coordination"
     assert created[0]["source_actor"] == "bot-1"
     assert created[0]["source_type"] == "system"
     payload = json.loads(created[0]["source_payload"])
@@ -373,3 +393,126 @@ def test_extract_preserves_claim_handoff_identity_context(sc_db_path, kctl_conn)
     assert candidates[0]["source_type"] == "system"
     stored_payload = json.loads(candidates[0]["source_payload"])
     assert stored_payload["mode"] == "rotate"
+
+
+def test_extract_scope_watermark_isolated_by_event_types(sc_db_path, kctl_conn):
+    add_event(sc_db_path, "decision", {"summary": "Decision A"})
+    add_event(sc_db_path, "pattern-noted", {"summary": "Pattern A"})
+    add_event(sc_db_path, "decision", {"summary": "Decision B"})
+
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    created_first, _ = extract_candidates(
+        sc_conn,
+        kctl_conn,
+        str(sc_db_path),
+        {"decision"},
+        0,
+        None,
+        NOW,
+    )
+    decision_scope_state = _db.get_extractor_state(
+        kctl_conn,
+        str(sc_db_path),
+        scope_key=_extract.build_scope_key({"decision"}, None),
+    )
+    combined_scope_state = _db.get_extractor_state(
+        kctl_conn,
+        str(sc_db_path),
+        scope_key=_extract.build_scope_key({"decision", "pattern-noted"}, None),
+    )
+    created_second, _ = extract_candidates(
+        sc_conn,
+        kctl_conn,
+        str(sc_db_path),
+        {"decision", "pattern-noted"},
+        0 if combined_scope_state is None else combined_scope_state["last_event_id"],
+        None,
+        NOW,
+    )
+    sc_conn.close()
+    all_candidates = _db.list_candidates(kctl_conn, status=None)
+
+    assert decision_scope_state is not None
+    assert combined_scope_state is None
+    assert [row["summary"] for row in created_first] == ["Decision A", "Decision B"]
+    assert [row["summary"] for row in created_second] == ["Pattern A"]
+    assert {row["summary"] for row in all_candidates} == {
+        "Decision A",
+        "Pattern A",
+        "Decision B",
+    }
+
+
+def test_extract_scope_watermark_isolated_by_sprint(sc_db_path, kctl_conn):
+    sc_conn = sqlite3.connect(str(sc_db_path))
+    sc_conn.execute(
+        "INSERT INTO sprint (id, name, status) VALUES (2, 'Sprint 2', 'active')",
+    )
+    sc_conn.execute(
+        "INSERT INTO track (id, sprint_id, name) VALUES (2, 2, 'docs')",
+    )
+    sc_conn.execute(
+        "INSERT INTO work_item (id, track_id, sprint_id, title) VALUES (2, 2, 2, 'Write docs')",
+    )
+    sc_conn.execute(
+        """
+        INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload)
+        VALUES (2, 2, 'actor', 'test', 'decision', ?)
+        """,
+        ('{"summary": "Sprint 2 decision"}',),
+    )
+    sc_conn.execute(
+        """
+        INSERT INTO event (sprint_id, work_item_id, source_type, actor, event_type, payload)
+        VALUES (1, 1, 'actor', 'test', 'decision', ?)
+        """,
+        ('{"summary": "Sprint 1 decision"}',),
+    )
+    sc_conn.commit()
+    sc_conn.close()
+
+    sc_ro = _db.get_sprintctl_connection(sc_db_path)
+    created_first, _ = extract_candidates(
+        sc_ro,
+        kctl_conn,
+        str(sc_db_path),
+        {"decision"},
+        0,
+        1,
+        NOW,
+    )
+    sprint_1_state = _db.get_extractor_state(
+        kctl_conn,
+        str(sc_db_path),
+        scope_key=_extract.build_scope_key({"decision"}, 1),
+    )
+    global_state = _db.get_extractor_state(
+        kctl_conn,
+        str(sc_db_path),
+        scope_key=_extract.build_scope_key({"decision"}, None),
+    )
+    created_second, _ = extract_candidates(
+        sc_ro,
+        kctl_conn,
+        str(sc_db_path),
+        {"decision"},
+        0 if global_state is None else global_state["last_event_id"],
+        None,
+        NOW,
+    )
+    sc_ro.close()
+    all_candidates = _db.list_candidates(kctl_conn, status=None)
+
+    assert sprint_1_state is not None
+    assert global_state is None
+    assert [row["summary"] for row in created_first] == ["Sprint 1 decision"]
+    assert [row["summary"] for row in created_second] == ["Sprint 2 decision"]
+    assert {row["summary"] for row in all_candidates} == {
+        "Sprint 1 decision",
+        "Sprint 2 decision",
+    }
+
+
+def test_resolve_event_types_from_env(monkeypatch):
+    monkeypatch.setenv("KCTL_EVENT_TYPES", "decision, claim-handoff")
+    assert _extract.resolve_event_types() == {"decision", "claim-handoff"}

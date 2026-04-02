@@ -93,6 +93,63 @@ def test_publish_rejects_invalid_tags(sc_db_path, kctl_conn):
         )
 
 
+def test_publish_rejects_coordination_candidate(sc_db_path, kctl_conn):
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {"summary": "Coordination event"},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    candidates = _db.list_candidates(
+        kctl_conn,
+        status="candidate",
+        candidate_kind="coordination",
+    )
+    cid = candidates[-1]["id"]
+    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+
+    with pytest.raises(ValueError, match="only durable candidates can be published"):
+        _publish.publish_candidate(
+            kctl_conn,
+            candidate_id=cid,
+            title=None,
+            body="body",
+            category="reference",
+            tags=None,
+            now=NOW2,
+        )
+
+
+def test_publish_marks_superseded_entry(sc_db_path, kctl_conn):
+    old_cid = _seed_approved(sc_db_path, kctl_conn, "Old decision")
+    old_entry = _publish.publish_candidate(
+        kctl_conn,
+        candidate_id=old_cid,
+        title="Old decision",
+        body="old body",
+        category="decision",
+        tags=None,
+        now=NOW2,
+    )
+    new_cid = _seed_approved(sc_db_path, kctl_conn, "New decision")
+    new_entry = _publish.publish_candidate(
+        kctl_conn,
+        candidate_id=new_cid,
+        title="New decision",
+        body="new body",
+        category="decision",
+        tags=None,
+        now=NOW2,
+        supersedes_entry_id=old_entry["id"],
+    )
+
+    refreshed_old = _db.get_entry(kctl_conn, old_entry["id"])
+    assert refreshed_old["superseded_by"] == new_entry["id"]
+
+
 # ---------------------------------------------------------------------------
 # render — unit via list_entries
 # ---------------------------------------------------------------------------
@@ -208,6 +265,28 @@ def test_cli_render_outputs_markdown(sc_db_path, kctl_conn, runner):
     assert "sprint: 1" in result.output
 
 
+def test_cli_render_shows_superseded_entry_link(sc_db_path, kctl_conn, runner):
+    old_cid = _seed_approved(sc_db_path, kctl_conn, "Old decision")
+    old_entry = _publish.publish_candidate(
+        kctl_conn, old_cid, "Old decision", "old body", "decision", None, NOW2,
+    )
+    new_cid = _seed_approved(sc_db_path, kctl_conn, "New decision")
+    new_entry = _publish.publish_candidate(
+        kctl_conn,
+        new_cid,
+        "New decision",
+        "new body",
+        "decision",
+        None,
+        NOW2,
+        supersedes_entry_id=old_entry["id"],
+    )
+
+    result = runner.invoke(cli, ["render"])
+    assert result.exit_code == 0
+    assert f"Superseded by: entry #{new_entry['id']}" in result.output
+
+
 def test_cli_render_uses_default_project_name(runner):
     """KCTL_PROJECT defaults to 'homelab-analytics', not 'project'."""
     result = runner.invoke(cli, ["render"])
@@ -273,10 +352,31 @@ def test_cli_status_json_output(sc_db_path, kctl_conn, runner):
     assert any(a["id"] == cid for a in approved)
     # Approved entries include source context for agent backlog shaping
     entry = next(a for a in approved if a["id"] == cid)
+    assert entry["candidate_kind"] == "durable"
     assert "source_track" in entry
     assert "source_sprint_id" in entry
     assert entry["source_sprint_id"] == 1
     assert data["sprint_id"] is None
+
+
+def test_cli_status_kind_all_separates_durable_and_coordination(sc_db_path, kctl_conn, runner):
+    durable_cid = _seed_approved(sc_db_path, kctl_conn, "Durable JSON")
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {"summary": "Coordination JSON"},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+
+    result = runner.invoke(cli, ["status", "--kind", "all", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["counts_by_kind"]["durable"]["approved"] == 1
+    assert data["counts_by_kind"]["coordination"]["candidate"] == 1
+    assert any(row["id"] == durable_cid for row in data["approved"])
 
 
 def test_cli_status_json_sprint_filter(sc_db_path, kctl_conn, runner):
@@ -290,7 +390,16 @@ def test_cli_status_json_sprint_filter(sc_db_path, kctl_conn, runner):
 
 def test_cli_review_list_json_output(sc_db_path, kctl_conn, runner):
     """review list --json emits a JSON array of candidates."""
-    add_event(sc_db_path, "decision", {"summary": "JSON candidate", "tags": ["auth"]})
+    add_event(
+        sc_db_path,
+        "decision",
+        {
+            "summary": "JSON candidate",
+            "tags": ["auth"],
+            "git_branch": "feat/auth",
+            "git_sha": "abc123",
+        },
+    )
     sc_conn = _db.get_sprintctl_connection(sc_db_path)
     extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
     sc_conn.close()
@@ -302,7 +411,34 @@ def test_cli_review_list_json_output(sc_db_path, kctl_conn, runner):
     assert len(rows) == 1
     assert rows[0]["summary"] == "JSON candidate"
     assert rows[0]["status"] == "candidate"
+    assert rows[0]["candidate_kind"] == "durable"
     assert rows[0]["tags"] == ["auth"]
+    assert rows[0]["provenance"]["git_branch"] == "feat/auth"
+    assert rows[0]["provenance"]["git_sha"] == "abc123"
+
+
+def test_cli_review_list_kind_coordination(sc_db_path, kctl_conn, runner):
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {
+            "summary": "Coordination candidate",
+            "mode": "rotate",
+            "from_identity": {"actor": "bot-1"},
+            "to_identity": {"actor": "bot-2"},
+        },
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+
+    result = runner.invoke(cli, ["review", "list", "--kind", "coordination", "--json"])
+    assert result.exit_code == 0
+    rows = json.loads(result.output)
+    assert len(rows) == 1
+    assert rows[0]["candidate_kind"] == "coordination"
+    assert rows[0]["coordination_context"]["mode"] == "rotate"
 
 
 def test_cli_review_list_json_empty(runner):

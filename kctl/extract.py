@@ -1,22 +1,26 @@
 import json
 import os
 import sqlite3
-from datetime import timedelta, timezone
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import db as _db
 
-DEFAULT_EVENT_TYPES = {
+DEFAULT_DURABLE_EVENT_TYPES = {
     "decision",
     "blocker-resolved",
     "pattern-noted",
     "risk-accepted",
     "lesson-learned",
+}
+DEFAULT_COORDINATION_EVENT_TYPES = {
     "claim-handoff",
     "claim-ownership-corrected",
     "claim-ambiguity-detected",
     "coordination-failure",
 }
+DEFAULT_EVENT_TYPES = DEFAULT_DURABLE_EVENT_TYPES | DEFAULT_COORDINATION_EVENT_TYPES
 
 
 def get_sprintctl_db_path() -> Path:
@@ -24,6 +28,29 @@ def get_sprintctl_db_path() -> Path:
     if env:
         return Path(env)
     return Path.home() / ".sprintctl" / "sprintctl.db"
+
+
+def resolve_event_types(raw: str | None = None) -> set[str]:
+    configured = raw if raw is not None else os.environ.get("KCTL_EVENT_TYPES")
+    if not configured:
+        return set(DEFAULT_EVENT_TYPES)
+
+    event_types = {item.strip() for item in configured.split(",") if item.strip()}
+    if not event_types:
+        raise ValueError("Event type filter cannot be empty")
+    return event_types
+
+
+def build_scope_key(event_types: set[str], sprint_id: int | None) -> str:
+    sprint_label = str(sprint_id) if sprint_id is not None else "*"
+    event_label = ",".join(sorted(event_types))
+    return f"scope:v1|sprint={sprint_label}|events={event_label}"
+
+
+def candidate_kind_for_event_type(event_type: str) -> str:
+    if event_type in DEFAULT_COORDINATION_EVENT_TYPES:
+        return "coordination"
+    return "durable"
 
 
 def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
@@ -58,6 +85,7 @@ def build_candidate(event: dict, extracted_at: str) -> tuple[dict, bool]:
         "source_created_at": event.get("created_at"),
         "source_payload": raw_payload,
         "event_type": event["event_type"],
+        "candidate_kind": candidate_kind_for_event_type(event["event_type"]),
         "summary": summary,
         "detail": payload.get("detail"),
         "tags": json.dumps(tags),
@@ -83,6 +111,10 @@ def extract_candidates(
     of the new candidates had a structured payload (vs. bare defaults).
     Idempotent: UNIQUE constraint on source_event_id prevents double-insertion.
     """
+    if not event_types:
+        raise ValueError("Event type filter cannot be empty")
+
+    scope_key = build_scope_key(event_types, sprint_id)
     placeholders = ",".join("?" * len(event_types))
     params: list = [since_event_id, *event_types]
 
@@ -126,82 +158,152 @@ def extract_candidates(
         if has_structured:
             structured_count += 1
 
-    _db.update_extractor_state(kctl_conn, sprintctl_db_path, max_event_id, now)
+    _db.update_extractor_state(
+        kctl_conn,
+        sprintctl_db_path=sprintctl_db_path,
+        scope_key=scope_key,
+        last_event_id=max_event_id,
+        last_run_at=now,
+    )
     return created, structured_count
 
 
-def run_preflight(sprintctl_conn: sqlite3.Connection) -> list[str]:
+def _format_hours_label(hours: float | None) -> str:
+    if hours is None:
+        return "off"
+    if hours == int(hours):
+        return f"{int(hours)} hours"
+    return f"{hours:.1f} hours"
+
+
+def _build_warning_from_report(report: dict) -> str | None:
+    stale_items = report.get("stale_items") or []
+    if not stale_items:
+        return None
+
+    sprint = report["sprint"]
+    active_stale = sum(1 for item in stale_items if item.get("status") == "active")
+    pending_stale = sum(1 for item in stale_items if item.get("status") == "pending")
+
+    threshold = report.get("threshold")
+    active_hours = (
+        threshold.total_seconds() / 3600
+        if threshold is not None
+        else report.get("threshold_hours")
+    )
+    pending_threshold = report.get("pending_threshold")
+    pending_hours = (
+        pending_threshold.total_seconds() / 3600
+        if pending_threshold is not None
+        else report.get("pending_threshold_hours")
+    )
+
+    detail_parts = []
+    if active_stale:
+        detail_parts.append(
+            f"{active_stale} active > {_format_hours_label(active_hours)}"
+        )
+    if pending_stale:
+        detail_parts.append(
+            f"{pending_stale} pending > {_format_hours_label(pending_hours)}"
+        )
+
+    detail = ", ".join(detail_parts) if detail_parts else f"{len(stale_items)} stale"
+    return (
+        f"Sprint '{sprint['name']}' has {len(stale_items)} stale item(s) "
+        f"({detail})"
+    )
+
+
+def _resolve_preflight_targets(
+    sprintctl_conn: sqlite3.Connection,
+    sprint_id: int | None,
+) -> list[dict]:
+    if sprint_id is not None:
+        row = sprintctl_conn.execute(
+            "SELECT id, name, status FROM sprint WHERE id = ?",
+            (sprint_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"Sprint #{sprint_id} not found")
+        return [dict(row)]
+
+    rows = sprintctl_conn.execute(
+        "SELECT id, name, status FROM sprint WHERE status = 'active' ORDER BY id ASC"
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _run_preflight_via_import(
+    sprintctl_conn: sqlite3.Connection,
+    sprint_id: int | None,
+) -> list[str]:
+    from sprintctl import maintain as sc_maintain  # type: ignore[import]
+
+    warnings: list[str] = []
+    now = datetime.now(timezone.utc)
+    for sprint in _resolve_preflight_targets(sprintctl_conn, sprint_id):
+        report = sc_maintain.check(sprintctl_conn, sprint["id"], now)
+        warning = _build_warning_from_report(report)
+        if warning:
+            warnings.append(warning)
+    return warnings
+
+
+def _run_preflight_via_cli(
+    sprintctl_conn: sqlite3.Connection,
+    sprintctl_db_path: str | Path,
+    sprint_id: int | None,
+) -> list[str]:
+    warnings: list[str] = []
+    env = os.environ.copy()
+    env["SPRINTCTL_DB"] = str(sprintctl_db_path)
+
+    for sprint in _resolve_preflight_targets(sprintctl_conn, sprint_id):
+        proc = subprocess.run(
+            [
+                "sprintctl",
+                "maintain",
+                "check",
+                "--sprint-id",
+                str(sprint["id"]),
+                "--json",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "preflight command failed")
+
+        payload = json.loads(proc.stdout)
+        warning = _build_warning_from_report(payload)
+        if warning:
+            warnings.append(warning)
+
+    return warnings
+
+
+def run_preflight(
+    sprintctl_conn: sqlite3.Connection,
+    *,
+    sprint_id: int | None = None,
+    sprintctl_db_path: str | Path | None = None,
+) -> list[str]:
     """
     Check for stale work items in active sprints.
     Returns a list of warning strings (empty = all clear).
-    Tries to import sprintctl.calc first; falls back to a direct DB query.
+    Tries sprintctl's Python API first; falls back to the CLI JSON contract.
     Extraction always proceeds regardless of warnings.
     """
-    warnings: list[str] = []
+    try:
+        return _run_preflight_via_import(sprintctl_conn, sprint_id)
+    except Exception as import_exc:  # noqa: BLE001
+        if sprintctl_db_path is None:
+            return [f"Preflight check failed: {import_exc}"]
 
     try:
-        from datetime import datetime as _datetime
-        from sprintctl import db as sc_db  # type: ignore[import]
-        from sprintctl import calc as sc_calc  # type: ignore[import]
-        from sprintctl.maintain import DEFAULT_STALE_THRESHOLD  # type: ignore[import]
-
-        _raw = os.environ.get("SPRINTCTL_STALE_THRESHOLD")
-        _threshold = timedelta(hours=float(_raw)) if _raw else DEFAULT_STALE_THRESHOLD
-        _now = _datetime.now(timezone.utc)
-        sprints = sc_db.list_sprints(sprintctl_conn)
-        for sprint in sprints:
-            if sprint.get("status") == "active":
-                items = sc_db.list_work_items(sprintctl_conn, sprint_id=sprint["id"])
-                stale = [
-                    i for i in items
-                    if sc_calc.item_staleness(i, _now, _threshold)["is_stale"]
-                ]
-                if stale:
-                    _hrs = _threshold.total_seconds() / 3600
-                    _label = (
-                        f"{int(_hrs)} hours" if _hrs == int(_hrs)
-                        else f"{_hrs:.1f} hours"
-                    )
-                    warnings.append(
-                        f"Sprint '{sprint['name']}' has {len(stale)} stale item(s) "
-                        f"(no activity in last {_label})"
-                    )
-        return warnings
-    except ImportError:
-        pass
-
-    # Subprocess fallback removed: sprintctl maintain check --json is not yet implemented.
-    # Instead replicate the stale-item check directly against the sprintctl DB.
-    _raw = os.environ.get("SPRINTCTL_STALE_THRESHOLD")
-    _stale_threshold = timedelta(hours=float(_raw)) if _raw else timedelta(hours=4)
-    _threshold_sql = f"-{int(_stale_threshold.total_seconds())} seconds"
-    _threshold_label = (
-        f"{int(_stale_threshold.total_seconds() / 3600)} hours"
-        if _stale_threshold.total_seconds() % 3600 == 0
-        else f"{_stale_threshold.total_seconds() / 3600:.1f} hours"
-    )
-    try:
-        active_sprints = sprintctl_conn.execute(
-            "SELECT id, name FROM sprint WHERE status = 'active'"
-        ).fetchall()
-        for sprint in active_sprints:
-            # Mirror sprintctl calc.item_staleness: active items idle > threshold are stale.
-            # pending/done/blocked items are never stale (matches sprintctl default behaviour).
-            stale_count = sprintctl_conn.execute(
-                """
-                SELECT COUNT(*) FROM work_item
-                WHERE sprint_id = ?
-                  AND status = 'active'
-                  AND updated_at < datetime('now', ?)
-                """,
-                (sprint["id"], _threshold_sql),
-            ).fetchone()[0]
-            if stale_count:
-                warnings.append(
-                    f"Sprint '{sprint['name']}' has {stale_count} stale item(s) "
-                    f"(no activity in last {_threshold_label})"
-                )
-    except Exception as exc:  # noqa: BLE001
-        warnings.append(f"Preflight check failed: {exc}")
-
-    return warnings
+        return _run_preflight_via_cli(sprintctl_conn, sprintctl_db_path, sprint_id)
+    except Exception as cli_exc:  # noqa: BLE001
+        return [f"Preflight check failed: {cli_exc}"]

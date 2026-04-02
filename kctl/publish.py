@@ -14,6 +14,7 @@ def publish_candidate(
     category: str,
     tags: str | None,
     now: str,
+    supersedes_entry_id: int | None = None,
 ) -> dict:
     """Promote an approved candidate to a knowledge_entry."""
     if category not in VALID_CATEGORIES:
@@ -34,10 +35,16 @@ def publish_candidate(
     candidate = _db.get_candidate(conn, candidate_id)
     if candidate is None:
         raise ValueError(f"Candidate #{candidate_id} not found")
+    if candidate.get("candidate_kind") != "durable":
+        raise ValueError(
+            f"Candidate #{candidate_id} is '{candidate['candidate_kind']}' — only durable candidates can be published"
+        )
     if candidate["status"] != "approved":
         raise ValueError(
             f"Candidate #{candidate_id} is '{candidate['status']}' — only approved candidates can be published"
         )
+    if supersedes_entry_id is not None and _db.get_entry(conn, supersedes_entry_id) is None:
+        raise ValueError(f"Entry #{supersedes_entry_id} not found")
 
     effective_title = title or candidate["summary"]
     if not effective_title:
@@ -58,6 +65,8 @@ def publish_candidate(
         "created_at": now,
     }
     entry_id = _db.insert_entry(conn, entry)
+    if supersedes_entry_id is not None:
+        _db.set_entry_superseded_by(conn, supersedes_entry_id, entry_id)
 
     # Transition candidate to published
     _db.transition_candidate(
