@@ -299,7 +299,9 @@ Runs sprintctl's own stale-item diagnostics and reports warnings before extracti
 - `ok` (boolean)
 - `sprint_id`
 - `warnings` (array)
-- `error` (`null` on success/warnings; string on hard failures such as missing DB/schema mismatch)
+- `error` (`null` on success/warnings; string on hard failures such as missing DB/schema mismatch or preflight runtime failure)
+
+When a hard preflight failure occurs, `warnings` is returned as an empty array and the failure is reported in `error`.
 
 ## Architecture
 

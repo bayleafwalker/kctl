@@ -694,15 +694,19 @@ def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
         sprintctl_db_path=sc_db_path,
     )
     sc_conn.close()
+    preflight_failure = next(
+        (warning for warning in warnings if warning.startswith("Preflight check failed:")),
+        None,
+    )
 
     if output_json:
         click.echo(
             json.dumps(
                 {
-                    "ok": not warnings,
+                    "ok": not warnings and preflight_failure is None,
                     "sprint_id": sprint_id,
-                    "warnings": warnings,
-                    "error": None,
+                    "warnings": [] if preflight_failure else warnings,
+                    "error": preflight_failure,
                 }
             )
         )

@@ -190,3 +190,21 @@ def test_cli_preflight_json_missing_db_reports_error(runner, tmp_path):
     assert payload["ok"] is False
     assert payload["warnings"] == []
     assert "not found" in payload["error"]
+
+
+def test_cli_preflight_json_runtime_failure_is_error(monkeypatch, sc_db_path, runner):
+    monkeypatch.setattr(
+        _extract,
+        "run_preflight",
+        lambda *args, **kwargs: ["Preflight check failed: sprintctl maintain unavailable"],
+    )
+
+    result = runner.invoke(
+        cli,
+        ["preflight", "--sprintctl-db", str(sc_db_path), "--json"],
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["warnings"] == []
+    assert "Preflight check failed" in payload["error"]
