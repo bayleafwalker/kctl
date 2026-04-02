@@ -7,6 +7,7 @@ import pytest
 
 from kctl import db as _db
 from kctl import extract as _extract
+from kctl.cli import cli
 
 
 def _load_sprintctl():
@@ -147,3 +148,32 @@ def test_extract_candidates_with_real_sprintctl_payloads(tmp_path):
     assert by_type["claim-handoff"]["candidate_kind"] == "coordination"
     assert json.loads(by_type["decision"]["source_payload"])["git_branch"] == "feat/auth"
     assert json.loads(by_type["claim-handoff"]["source_payload"])["to_identity"]["actor"] == "agent-2"
+
+
+def test_cli_preflight_json_ok(monkeypatch, sc_db_path, runner):
+    monkeypatch.setattr(_extract, "run_preflight", lambda *args, **kwargs: [])
+
+    result = runner.invoke(
+        cli,
+        ["preflight", "--sprintctl-db", str(sc_db_path), "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["warnings"] == []
+    assert payload["sprint_id"] is None
+
+
+def test_cli_preflight_json_warnings_are_structured(monkeypatch, sc_db_path, runner):
+    warning = "Sprint 'Sprint 1' has 1 stale item(s) (1 active > 4 hours)"
+    monkeypatch.setattr(_extract, "run_preflight", lambda *args, **kwargs: [warning])
+
+    result = runner.invoke(
+        cli,
+        ["preflight", "--sprintctl-db", str(sc_db_path), "--json"],
+    )
+    assert result.exit_code != 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is False
+    assert payload["warnings"] == [warning]
+    assert payload["sprint_id"] is None

@@ -638,19 +638,26 @@ def status_cmd(obj, sprint_id, kind, output_json) -> None:
     help="Path to sprintctl DB",
 )
 @click.option("--sprint-id", type=int, default=None, help="Scope check to one sprint")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def preflight_cmd(obj, sprintctl_db, sprint_id) -> None:
+def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
     """Run sprintctl maintain check and report results."""
     sc_db_path = Path(sprintctl_db) if sprintctl_db else _extract.get_sprintctl_db_path()
     if not sc_db_path.exists():
-        click.echo(f"Error: sprintctl DB not found at {sc_db_path}", err=True)
+        if output_json:
+            click.echo(json.dumps({"ok": False, "error": f"sprintctl DB not found at {sc_db_path}"}))
+        else:
+            click.echo(f"Error: sprintctl DB not found at {sc_db_path}", err=True)
         sys.exit(1)
 
     try:
         sc_conn = _db.get_sprintctl_connection(sc_db_path)
         _db.validate_sprintctl_schema(sc_conn)
     except Exception as exc:
-        click.echo(f"Error: {exc}", err=True)
+        if output_json:
+            click.echo(json.dumps({"ok": False, "error": str(exc)}))
+        else:
+            click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
     warnings = _extract.run_preflight(
@@ -659,6 +666,20 @@ def preflight_cmd(obj, sprintctl_db, sprint_id) -> None:
         sprintctl_db_path=sc_db_path,
     )
     sc_conn.close()
+
+    if output_json:
+        click.echo(
+            json.dumps(
+                {
+                    "ok": not warnings,
+                    "sprint_id": sprint_id,
+                    "warnings": warnings,
+                }
+            )
+        )
+        if warnings:
+            sys.exit(1)
+        return
 
     if warnings:
         for w in warnings:
