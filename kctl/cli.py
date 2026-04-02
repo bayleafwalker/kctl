@@ -103,6 +103,29 @@ def _print_candidate(c: dict) -> None:
         click.echo(f"           tags: {tags}")
 
 
+def _entry_json(e: dict) -> dict:
+    source_sprint = e.get("source_sprint")
+    source_sprint_id = source_sprint
+    try:
+        source_sprint_id = int(source_sprint) if source_sprint is not None else None
+    except (TypeError, ValueError):
+        source_sprint_id = source_sprint
+
+    return {
+        "id": e["id"],
+        "candidate_id": e["candidate_id"],
+        "title": e["title"],
+        "body": e["body"],
+        "category": e["category"],
+        "tags": json.loads(e.get("tags") or "[]"),
+        "source_sprint": source_sprint,
+        "source_sprint_id": source_sprint_id,
+        "source_track": e.get("source_track"),
+        "created_at": e["created_at"],
+        "superseded_by": e.get("superseded_by"),
+    }
+
+
 @click.group()
 @click.pass_context
 def cli(ctx: click.Context) -> None:
@@ -410,13 +433,40 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
 @click.option("--tag", default=None, help="Filter by tag")
 @click.option("--sprint-id", type=int, default=None, help="Filter by source sprint ID")
 @click.option("--output", default=None, help="Write to FILE instead of stdout")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def render_cmd(obj, category, tag, sprint_id, output) -> None:
+def render_cmd(obj, category, tag, sprint_id, output, output_json) -> None:
     """Render published knowledge entries to structured markdown."""
     conn = obj["conn"]
     entries = _db.list_entries(conn, category=category, tag=tag, sprint_id=sprint_id)
 
     project = os.environ.get("KCTL_PROJECT", "homelab-analytics")
+    if output_json:
+        counts_by_category: dict[str, int] = {}
+        for entry in entries:
+            counts_by_category[entry["category"]] = counts_by_category.get(entry["category"], 0) + 1
+        payload = {
+            "project": project,
+            "generated_at": _now(),
+            "filters": {
+                "category": category,
+                "tag": tag,
+                "sprint_id": sprint_id,
+            },
+            "count": len(entries),
+            "counts_by_category": counts_by_category,
+            "entries": [_entry_json(entry) for entry in entries],
+        }
+        content = json.dumps(payload)
+        if output:
+            out_path = Path(output)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(content, encoding="utf-8")
+            click.echo(f"Wrote {len(entries)} entry/entries to {output}")
+        else:
+            click.echo(content)
+        return
+
     lines = [
         f"# Knowledge Base — {project}",
         f"Generated: {_now()}",

@@ -265,6 +265,32 @@ def test_cli_render_outputs_markdown(sc_db_path, kctl_conn, runner):
     assert "sprint: 1" in result.output
 
 
+def test_cli_render_json_output(sc_db_path, kctl_conn, runner):
+    cid = _seed_approved(sc_db_path, kctl_conn, "JSON render entry")
+    _publish.publish_candidate(
+        kctl_conn, cid, "Use RS256", "RS256 is better.", "decision", '["auth"]', NOW2,
+    )
+
+    result = runner.invoke(cli, ["render", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["count"] == 1
+    assert data["project"] == "homelab-analytics"
+    assert data["entries"][0]["title"] == "Use RS256"
+    assert data["entries"][0]["category"] == "decision"
+    assert data["entries"][0]["tags"] == ["auth"]
+    assert data["entries"][0]["source_track"] == "backend"
+    assert data["entries"][0]["source_sprint_id"] == 1
+
+
+def test_cli_render_json_empty(runner):
+    result = runner.invoke(cli, ["render", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["count"] == 0
+    assert data["entries"] == []
+
+
 def test_cli_render_shows_superseded_entry_link(sc_db_path, kctl_conn, runner):
     old_cid = _seed_approved(sc_db_path, kctl_conn, "Old decision")
     old_entry = _publish.publish_candidate(
