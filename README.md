@@ -31,9 +31,9 @@ kctl keeps these streams separate:
 | Stream | Source examples | Reviewable | Publishable | Rendered |
 |---|---|---:|---:|---:|
 | `durable` | `decision`, `pattern-noted`, `lesson-learned`, `risk-accepted`, `blocker-resolved` | yes | yes | yes |
-| `coordination` | `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure` | yes | no | no |
+| `coordination` | `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure` | yes | yes, with explicit opt-in | yes, after publish |
 
-Coordination items stay visible for audit and handoff analysis, but they do not become durable knowledge entries.
+Coordination items stay separate by default for audit and handoff analysis. When a coordination lesson is genuinely durable, publish it intentionally with `kctl publish --coordination ...` so it enters the knowledge base with its source stream preserved.
 
 ## The lifecycle
 
@@ -45,7 +45,7 @@ kctl extract
       |
       +--> durable candidates ------> review ------> publish ------> render knowledge.md
       |
-      +--> coordination candidates -> review ------> audit / agent context only
+      +--> coordination candidates -> review ------> publish --coordination ------> render knowledge.md
       |
       v
 agents read kctl artifacts and choose sprintctl actions
@@ -58,7 +58,7 @@ kctl never writes back into sprintctl. sprintctl remains the only tool that owns
 The intended loop is:
 
 1. Extract and review what mattered during execution.
-2. Publish durable knowledge and render `knowledge.md`.
+2. Publish durable knowledge and any coordination lessons worth preserving, then render `knowledge.md`.
 3. Use `kctl status --json`, `kctl review list --json`, or rendered markdown to decide what matters next.
 4. Have an agent or operator invoke the appropriate sprintctl commands.
 
@@ -70,9 +70,9 @@ kctl status --kind all --json                       # durable + coordination cou
 kctl review list --status approved --json           # approved durable candidates ready to publish
 kctl review show --id 42 --json                     # one candidate with full source context
 kctl review list --kind coordination --json         # coordination review stream
-kctl render --json                                  # durable knowledge entries as structured JSON
+kctl render --json                                  # published knowledge entries as structured JSON
 kctl preflight --json                               # stale-item warnings as structured JSON
-kctl render --sprint-id N                           # durable knowledge from one sprint
+kctl render --sprint-id N                           # published knowledge from one sprint
 ```
 
 An agent shaping sprint work can read kctl artifacts, inspect source track, sprint, provenance, and coordination context, then choose the relevant sprintctl action. kctl is the reader and reviewer; sprintctl remains the writer.
@@ -151,6 +151,13 @@ kctl publish \
   --body "Symmetric HMAC breaks when services don't share a secret rotation schedule. Switched to RS256 after repeated key sync failures." \
   --category decision
 
+# Publish an approved coordination lesson intentionally
+kctl publish \
+  --id 7 \
+  --coordination \
+  --body "Persist claim tokens in a local recovery file so the orchestrating session can resume ownership safely after resets." \
+  --category lesson
+
 # Render published entries to markdown
 kctl render --output knowledge.md
 git add knowledge.md
@@ -221,7 +228,7 @@ kctl publish --id 7 --body "..." --category decision --supersedes 3
 
 Promotes an approved durable candidate to a knowledge entry. Requires `--body` and `--category`. `--title` defaults to the candidate summary if omitted. `--tags` defaults to the candidate tags if omitted.
 
-Coordination candidates are not publishable.
+Approved coordination candidates require explicit opt-in publication via `--coordination`.
 
 Categories:
 - `decision`
@@ -235,7 +242,7 @@ Categories:
 ### Render
 
 ```sh
-kctl render                              # all published durable entries to stdout
+kctl render                              # all published entries to stdout
 kctl render --category decision          # filter by category
 kctl render --tag auth                   # filter by tag
 kctl render --sprint-id 1                # entries from a specific sprint
@@ -243,12 +250,12 @@ kctl render --json                       # machine-readable output
 kctl render --output knowledge.md        # write to file
 ```
 
-Renders published durable knowledge entries as structured markdown, grouped by category. Each entry shows its source track and sprint container. Superseded entries are annotated. Coordination candidates never appear in rendered output.
+Renders published knowledge entries as structured markdown, grouped by category. Each entry shows its source candidate kind, track, and sprint container. Superseded entries are annotated.
 
 `kctl render --json` returns:
 - `project`, `generated_at`, and `filters`
 - `count` and `counts_by_category`
-- `entries` with title/body/category/tags plus source sprint and track fields
+- `entries` with title/body/category/tags plus source candidate kind, sprint, and track fields
 
 The document header uses `KCTL_PROJECT` and defaults to `homelab-analytics` if unset.
 

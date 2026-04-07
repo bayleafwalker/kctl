@@ -109,6 +109,12 @@ _MIGRATIONS: list[str] = [
         ELSE 'durable'
     END
     """,
+    # Migration 6: preserve the source candidate stream on published entries so
+    # coordination learnings can be intentionally published without losing provenance.
+    """
+    ALTER TABLE knowledge_entry ADD COLUMN source_candidate_kind TEXT NOT NULL DEFAULT 'durable'
+        CHECK (source_candidate_kind IN ('durable', 'coordination'))
+    """,
 ]
 
 
@@ -291,11 +297,12 @@ def insert_entry(conn: sqlite3.Connection, entry: dict) -> int:
     cur = conn.execute(
         """
         INSERT INTO knowledge_entry
-            (candidate_id, title, body, tags, category, source_sprint, source_track, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (candidate_id, source_candidate_kind, title, body, tags, category, source_sprint, source_track, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["candidate_id"],
+            entry.get("source_candidate_kind", "durable"),
             entry["title"],
             entry["body"],
             entry.get("tags", "[]"),

@@ -15,6 +15,7 @@ def publish_candidate(
     tags: str | None,
     now: str,
     supersedes_entry_id: int | None = None,
+    allow_coordination: bool = False,
 ) -> dict:
     """Promote an approved candidate to a knowledge_entry."""
     if category not in VALID_CATEGORIES:
@@ -35,9 +36,14 @@ def publish_candidate(
     candidate = _db.get_candidate(conn, candidate_id)
     if candidate is None:
         raise ValueError(f"Candidate #{candidate_id} not found")
-    if candidate.get("candidate_kind") != "durable":
+    candidate_kind = candidate.get("candidate_kind", "durable")
+    if candidate_kind == "coordination" and not allow_coordination:
         raise ValueError(
-            f"Candidate #{candidate_id} is '{candidate['candidate_kind']}' — only durable candidates can be published"
+            f"Candidate #{candidate_id} is 'coordination' — use --coordination to publish an approved coordination candidate"
+        )
+    if candidate_kind not in {"durable", "coordination"}:
+        raise ValueError(
+            f"Candidate #{candidate_id} has unsupported candidate kind '{candidate_kind}'"
         )
     if candidate["status"] != "approved":
         raise ValueError(
@@ -56,6 +62,7 @@ def publish_candidate(
 
     entry = {
         "candidate_id": candidate_id,
+        "source_candidate_kind": candidate_kind,
         "title": effective_title,
         "body": body,
         "tags": tags_json if tags is not None else (candidate.get("tags") or "[]"),

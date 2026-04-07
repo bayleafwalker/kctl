@@ -114,6 +114,7 @@ def _entry_json(e: dict) -> dict:
     return {
         "id": e["id"],
         "candidate_id": e["candidate_id"],
+        "source_candidate_kind": e.get("source_candidate_kind", "durable"),
         "title": e["title"],
         "body": e["body"],
         "category": e["category"],
@@ -397,6 +398,12 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
 @click.option("--body", required=True, help="Full knowledge body / detail text")
 @click.option("--supersedes", "supersedes_entry_id", type=int, default=None, help="Mark an older entry as superseded by this new entry")
 @click.option(
+    "--coordination",
+    is_flag=True,
+    default=False,
+    help="Allow publishing an approved coordination candidate into the durable knowledge base",
+)
+@click.option(
     "--category",
     required=True,
     type=click.Choice(["decision", "pattern", "lesson", "risk", "reference"]),
@@ -404,8 +411,8 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
 )
 @click.option("--tags", default=None, help='Tags as JSON array, e.g. \'["auth","lessons"]\'')
 @click.pass_obj
-def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, tags) -> None:
-    """Promote an approved durable candidate to a knowledge entry."""
+def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, coordination, category, tags) -> None:
+    """Promote an approved candidate to a knowledge entry."""
     conn = obj["conn"]
     try:
         entry = _publish.publish_candidate(
@@ -416,6 +423,7 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
             category=category,
             tags=tags,
             supersedes_entry_id=supersedes_entry_id,
+            allow_coordination=coordination,
             now=_now(),
         )
     except ValueError as exc:
@@ -424,6 +432,7 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
 
     click.echo(f"Published entry #{entry['id']}: {entry['title']}")
     click.echo(f"  Category: {entry['category']}")
+    click.echo(f"  Source kind: {entry.get('source_candidate_kind', 'durable')}")
     tags_str = _format_tags(entry.get("tags"))
     if tags_str:
         click.echo(f"  Tags: {tags_str}")
@@ -500,6 +509,7 @@ def render_cmd(obj, category, tag, sprint_id, output, output_json) -> None:
             for e in by_category[cat]:
                 lines.append(f"### {e['title']}")
                 source_parts = []
+                source_parts.append(f"kind: {e.get('source_candidate_kind', 'durable')}")
                 if e.get("source_track"):
                     source_parts.append(f"track: {e['source_track']}")
                 source_parts.append(f"sprint: {e['source_sprint']}")

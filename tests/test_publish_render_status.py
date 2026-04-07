@@ -111,7 +111,7 @@ def test_publish_rejects_coordination_candidate(sc_db_path, kctl_conn):
     cid = candidates[-1]["id"]
     _review.approve_candidate(kctl_conn, cid, now=NOW2)
 
-    with pytest.raises(ValueError, match="only durable candidates can be published"):
+    with pytest.raises(ValueError, match="use --coordination"):
         _publish.publish_candidate(
             kctl_conn,
             candidate_id=cid,
@@ -121,6 +121,45 @@ def test_publish_rejects_coordination_candidate(sc_db_path, kctl_conn):
             tags=None,
             now=NOW2,
         )
+
+
+def test_publish_allows_coordination_candidate_with_opt_in(sc_db_path, kctl_conn):
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {"summary": "Coordination lesson", "tags": ["claims", "workflow"]},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    candidates = _db.list_candidates(
+        kctl_conn,
+        status="candidate",
+        candidate_kind="coordination",
+    )
+    cid = candidates[-1]["id"]
+    _review.approve_candidate(
+        kctl_conn,
+        cid,
+        now=NOW2,
+        detail="Persist claim tokens to disk so the orchestrating session can recover after resets.",
+    )
+
+    entry = _publish.publish_candidate(
+        kctl_conn,
+        candidate_id=cid,
+        title="Persist claim tokens for recovery",
+        body="Persist claim tokens to disk so the orchestrating session can recover after resets.",
+        category="lesson",
+        tags=None,
+        now=NOW2,
+        allow_coordination=True,
+    )
+
+    assert entry["source_candidate_kind"] == "coordination"
+    candidate = _db.get_candidate(kctl_conn, cid)
+    assert candidate["status"] == "published"
 
 
 def test_publish_marks_superseded_entry(sc_db_path, kctl_conn):
@@ -229,6 +268,60 @@ def test_cli_publish_command(sc_db_path, kctl_conn, runner):
     ])
     assert result.exit_code == 0, result.output
     assert "Published entry #" in result.output
+    assert "Source kind: durable" in result.output
+
+
+def test_cli_publish_coordination_requires_flag(sc_db_path, kctl_conn, runner):
+    add_event(
+        sc_db_path,
+        "coordination-failure",
+        {"summary": "Coordination publish test"},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    candidates = _db.list_candidates(kctl_conn, status="candidate", candidate_kind="coordination")
+    cid = candidates[-1]["id"]
+    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+
+    result = runner.invoke(
+        cli,
+        ["publish", "--id", str(cid), "--body", "Body.", "--category", "reference"],
+    )
+    assert result.exit_code != 0
+    assert "--coordination" in result.output
+
+
+def test_cli_publish_coordination_with_flag(sc_db_path, kctl_conn, runner):
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {"summary": "Coordination publish flag", "tags": ["claims"]},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    candidates = _db.list_candidates(kctl_conn, status="candidate", candidate_kind="coordination")
+    cid = candidates[-1]["id"]
+    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+
+    result = runner.invoke(
+        cli,
+        [
+            "publish",
+            "--id",
+            str(cid),
+            "--coordination",
+            "--body",
+            "Persist the token file for crash recovery.",
+            "--category",
+            "lesson",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Source kind: coordination" in result.output
 
 
 def test_cli_publish_rejects_candidate(sc_db_path, kctl_conn, runner):
@@ -261,6 +354,7 @@ def test_cli_render_outputs_markdown(sc_db_path, kctl_conn, runner):
     assert "### Use RS256" in result.output
     assert "RS256 is better." in result.output
     # Track is foregrounded; sprint is a container ref
+    assert "kind: durable" in result.output
     assert "track: backend" in result.output
     assert "sprint: 1" in result.output
 
@@ -279,8 +373,39 @@ def test_cli_render_json_output(sc_db_path, kctl_conn, runner):
     assert data["entries"][0]["title"] == "Use RS256"
     assert data["entries"][0]["category"] == "decision"
     assert data["entries"][0]["tags"] == ["auth"]
+    assert data["entries"][0]["source_candidate_kind"] == "durable"
     assert data["entries"][0]["source_track"] == "backend"
     assert data["entries"][0]["source_sprint_id"] == 1
+
+
+def test_cli_render_includes_published_coordination_entry(sc_db_path, kctl_conn, runner):
+    add_event(
+        sc_db_path,
+        "coordination-failure",
+        {"summary": "Persist claim-token workflow", "tags": ["claims", "coordination"]},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    candidates = _db.list_candidates(kctl_conn, status="candidate", candidate_kind="coordination")
+    cid = candidates[-1]["id"]
+    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+    _publish.publish_candidate(
+        kctl_conn,
+        cid,
+        "Persist claim tokens",
+        "Use a local recovery file so claim ownership survives session resets.",
+        "lesson",
+        None,
+        NOW2,
+        allow_coordination=True,
+    )
+
+    result = runner.invoke(cli, ["render"])
+    assert result.exit_code == 0, result.output
+    assert "Persist claim tokens" in result.output
+    assert "kind: coordination" in result.output
 
 
 def test_cli_render_json_empty(runner):
