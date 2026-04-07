@@ -109,6 +109,21 @@ _MIGRATIONS: list[str] = [
         ELSE 'durable'
     END
     """,
+    # Migration 6: published entries must preserve which stream they came from
+    # so durable and coordination knowledge can render separately.
+    """
+    ALTER TABLE knowledge_entry ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'durable';
+
+    UPDATE knowledge_entry
+    SET source_kind = COALESCE(
+        (
+            SELECT candidate_kind
+            FROM knowledge_candidate
+            WHERE knowledge_candidate.id = knowledge_entry.candidate_id
+        ),
+        'durable'
+    )
+    """,
 ]
 
 
@@ -291,8 +306,8 @@ def insert_entry(conn: sqlite3.Connection, entry: dict) -> int:
     cur = conn.execute(
         """
         INSERT INTO knowledge_entry
-            (candidate_id, title, body, tags, category, source_sprint, source_track, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (candidate_id, title, body, tags, category, source_sprint, source_track, source_kind, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             entry["candidate_id"],
@@ -302,6 +317,7 @@ def insert_entry(conn: sqlite3.Connection, entry: dict) -> int:
             entry["category"],
             entry["source_sprint"],
             entry.get("source_track"),
+            entry.get("source_kind", "durable"),
             entry["created_at"],
         ),
     )
@@ -321,6 +337,7 @@ def list_entries(
     category: str | None = None,
     tag: str | None = None,
     sprint_id: int | None = None,
+    source_kind: str | None = None,
 ) -> list[dict]:
     where_clauses = []
     params: list = []
@@ -331,6 +348,9 @@ def list_entries(
     if sprint_id is not None:
         where_clauses.append("source_sprint = ?")
         params.append(str(sprint_id))
+    if source_kind is not None:
+        where_clauses.append("source_kind = ?")
+        params.append(source_kind)
 
     query = "SELECT * FROM knowledge_entry"
     if where_clauses:

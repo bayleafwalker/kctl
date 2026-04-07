@@ -15,6 +15,7 @@ def publish_candidate(
     tags: str | None,
     now: str,
     supersedes_entry_id: int | None = None,
+    coordination: bool = False,
 ) -> dict:
     """Promote an approved candidate to a knowledge_entry."""
     if category not in VALID_CATEGORIES:
@@ -35,9 +36,10 @@ def publish_candidate(
     candidate = _db.get_candidate(conn, candidate_id)
     if candidate is None:
         raise ValueError(f"Candidate #{candidate_id} not found")
-    if candidate.get("candidate_kind") != "durable":
+    candidate_kind = candidate.get("candidate_kind", "durable")
+    if candidate_kind == "coordination" and not coordination:
         raise ValueError(
-            f"Candidate #{candidate_id} is '{candidate['candidate_kind']}' — only durable candidates can be published"
+            f"Candidate #{candidate_id} is 'coordination' — pass coordination=True or use kctl publish --coordination"
         )
     if candidate["status"] != "approved":
         raise ValueError(
@@ -62,6 +64,7 @@ def publish_candidate(
         "category": category,
         "source_sprint": source_sprint,
         "source_track": candidate.get("source_track"),
+        "source_kind": candidate_kind,
         "created_at": now,
     }
     entry_id = _db.insert_entry(conn, entry)

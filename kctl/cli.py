@@ -121,6 +121,7 @@ def _entry_json(e: dict) -> dict:
         "source_sprint": source_sprint,
         "source_sprint_id": source_sprint_id,
         "source_track": e.get("source_track"),
+        "source_kind": e.get("source_kind", "durable"),
         "created_at": e["created_at"],
         "superseded_by": e.get("superseded_by"),
     }
@@ -403,9 +404,15 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
     help="Knowledge category",
 )
 @click.option("--tags", default=None, help='Tags as JSON array, e.g. \'["auth","lessons"]\'')
+@click.option(
+    "--coordination",
+    is_flag=True,
+    default=False,
+    help="Allow publishing an approved coordination candidate into the coordination knowledge base",
+)
 @click.pass_obj
-def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, tags) -> None:
-    """Promote an approved durable candidate to a knowledge entry."""
+def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, tags, coordination) -> None:
+    """Promote an approved candidate to a knowledge entry."""
     conn = obj["conn"]
     try:
         entry = _publish.publish_candidate(
@@ -416,6 +423,7 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
             category=category,
             tags=tags,
             supersedes_entry_id=supersedes_entry_id,
+            coordination=coordination,
             now=_now(),
         )
     except ValueError as exc:
@@ -423,6 +431,7 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
         sys.exit(1)
 
     click.echo(f"Published entry #{entry['id']}: {entry['title']}")
+    click.echo(f"  Stream: {entry.get('source_kind', 'durable')}")
     click.echo(f"  Category: {entry['category']}")
     tags_str = _format_tags(entry.get("tags"))
     if tags_str:
@@ -440,15 +449,28 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
     type=click.Choice(["decision", "pattern", "lesson", "risk", "reference"]),
     help="Filter by category",
 )
+@click.option(
+    "--coordination",
+    is_flag=True,
+    default=False,
+    help="Render the coordination knowledge base instead of durable knowledge",
+)
 @click.option("--tag", default=None, help="Filter by tag")
 @click.option("--sprint-id", type=int, default=None, help="Filter by source sprint ID")
 @click.option("--output", default=None, help="Write to FILE instead of stdout")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def render_cmd(obj, category, tag, sprint_id, output, output_json) -> None:
+def render_cmd(obj, category, coordination, tag, sprint_id, output, output_json) -> None:
     """Render published knowledge entries to structured markdown."""
     conn = obj["conn"]
-    entries = _db.list_entries(conn, category=category, tag=tag, sprint_id=sprint_id)
+    source_kind = "coordination" if coordination else "durable"
+    entries = _db.list_entries(
+        conn,
+        category=category,
+        tag=tag,
+        sprint_id=sprint_id,
+        source_kind=source_kind,
+    )
 
     project = os.environ.get("KCTL_PROJECT", "homelab-analytics")
     if output_json:
@@ -459,10 +481,12 @@ def render_cmd(obj, category, tag, sprint_id, output, output_json) -> None:
             "project": project,
             "generated_at": _now(),
             "filters": {
+                "source_kind": source_kind,
                 "category": category,
                 "tag": tag,
                 "sprint_id": sprint_id,
             },
+            "source_kind": source_kind,
             "count": len(entries),
             "counts_by_category": counts_by_category,
             "entries": [_entry_json(entry) for entry in entries],
@@ -477,14 +501,15 @@ def render_cmd(obj, category, tag, sprint_id, output, output_json) -> None:
             click.echo(content)
         return
 
+    title = "Knowledge Base Ops" if coordination else "Knowledge Base"
     lines = [
-        f"# Knowledge Base — {project}",
+        f"# {title} — {project}",
         f"Generated: {_now()}",
         "",
     ]
 
     if not entries:
-        lines.append("_No published entries found._")
+        lines.append(f"_No published {source_kind} entries found._")
     else:
         # Group by category
         by_category: dict[str, list[dict]] = {}

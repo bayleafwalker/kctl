@@ -31,9 +31,9 @@ kctl keeps these streams separate:
 | Stream | Source examples | Reviewable | Publishable | Rendered |
 |---|---|---:|---:|---:|
 | `durable` | `decision`, `pattern-noted`, `lesson-learned`, `risk-accepted`, `blocker-resolved` | yes | yes | yes |
-| `coordination` | `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure` | yes | no | no |
+| `coordination` | `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure` | yes | yes, via `kctl publish --coordination` | yes, via `kctl render --coordination` |
 
-Coordination items stay visible for audit and handoff analysis, but they do not become durable knowledge entries.
+Coordination items still stay distinct from durable knowledge, but approved coordination lessons can now be promoted into a separate coordination knowledge base when they carry workflow-improvement value.
 
 ## The lifecycle
 
@@ -45,7 +45,7 @@ kctl extract
       |
       +--> durable candidates ------> review ------> publish ------> render knowledge.md
       |
-      +--> coordination candidates -> review ------> audit / agent context only
+      +--> coordination candidates -> review ------> publish --coordination ------> render --coordination knowledge-base-ops.md
       |
       v
 agents read kctl artifacts and choose sprintctl actions
@@ -151,8 +151,16 @@ kctl publish \
   --body "Symmetric HMAC breaks when services don't share a secret rotation schedule. Switched to RS256 after repeated key sync failures." \
   --category decision
 
+# Publish approved coordination knowledge into the ops knowledge base
+kctl publish \
+  --id 7 \
+  --body "Claim-token recovery failed during background handoff. Promote these lessons into an ops playbook instead of leaving them in review-only state." \
+  --category lesson \
+  --coordination
+
 # Render published entries to markdown
 kctl render --output knowledge.md
+kctl render --coordination --output knowledge-base-ops.md
 git add knowledge.md
 ```
 
@@ -217,11 +225,12 @@ Review supports only `approve` and `reject`. Status transitions are enforced:
 kctl publish --id 5 --body "Full detail text." --category decision
 kctl publish --id 5 --title "Override title" --body "..." --category pattern --tags '["auth"]'
 kctl publish --id 7 --body "..." --category decision --supersedes 3
+kctl publish --id 12 --body "..." --category lesson --coordination
 ```
 
-Promotes an approved durable candidate to a knowledge entry. Requires `--body` and `--category`. `--title` defaults to the candidate summary if omitted. `--tags` defaults to the candidate tags if omitted.
+Promotes an approved candidate to a knowledge entry. Requires `--body` and `--category`. `--title` defaults to the candidate summary if omitted. `--tags` defaults to the candidate tags if omitted.
 
-Coordination candidates are not publishable.
+Coordination candidates require `--coordination`. That keeps durable publication as the default path while making workflow lessons publishable into a distinct rendered target.
 
 Categories:
 - `decision`
@@ -236,18 +245,20 @@ Categories:
 
 ```sh
 kctl render                              # all published durable entries to stdout
+kctl render --coordination               # published coordination entries to stdout
 kctl render --category decision          # filter by category
 kctl render --tag auth                   # filter by tag
 kctl render --sprint-id 1                # entries from a specific sprint
 kctl render --json                       # machine-readable output
-kctl render --output knowledge.md        # write to file
+kctl render --output knowledge.md        # write durable knowledge to file
+kctl render --coordination --output knowledge-base-ops.md
 ```
 
-Renders published durable knowledge entries as structured markdown, grouped by category. Each entry shows its source track and sprint container. Superseded entries are annotated. Coordination candidates never appear in rendered output.
+Renders published entries as structured markdown, grouped by category. Durable knowledge remains the default. `--coordination` switches to the coordination knowledge base, which is intended for workflow and operating lessons. Each entry shows its source track and sprint container. Superseded entries are annotated.
 
 `kctl render --json` returns:
 - `project`, `generated_at`, and `filters`
-- `count` and `counts_by_category`
+- `source_kind`, `count`, and `counts_by_category`
 - `entries` with title/body/category/tags plus source sprint and track fields
 
 The document header uses `KCTL_PROJECT` and defaults to `homelab-analytics` if unset.

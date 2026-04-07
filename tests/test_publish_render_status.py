@@ -24,6 +24,25 @@ def _seed_approved(sc_db_path, kctl_conn, summary="Test decision") -> int:
     return cid
 
 
+def _seed_approved_coordination(sc_db_path, kctl_conn, summary="Coordination event") -> int:
+    add_event(
+        sc_db_path,
+        "claim-handoff",
+        {"summary": summary},
+        source_type="system",
+    )
+    sc_conn = _db.get_sprintctl_connection(sc_db_path)
+    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
+    sc_conn.close()
+    cid = _db.list_candidates(
+        kctl_conn,
+        status="candidate",
+        candidate_kind="coordination",
+    )[-1]["id"]
+    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+    return cid
+
+
 # ---------------------------------------------------------------------------
 # publish — unit
 # ---------------------------------------------------------------------------
@@ -94,24 +113,9 @@ def test_publish_rejects_invalid_tags(sc_db_path, kctl_conn):
 
 
 def test_publish_rejects_coordination_candidate(sc_db_path, kctl_conn):
-    add_event(
-        sc_db_path,
-        "claim-handoff",
-        {"summary": "Coordination event"},
-        source_type="system",
-    )
-    sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    extract_candidates(sc_conn, kctl_conn, str(sc_db_path), DEFAULT_EVENT_TYPES, 0, None, NOW)
-    sc_conn.close()
-    candidates = _db.list_candidates(
-        kctl_conn,
-        status="candidate",
-        candidate_kind="coordination",
-    )
-    cid = candidates[-1]["id"]
-    _review.approve_candidate(kctl_conn, cid, now=NOW2)
+    cid = _seed_approved_coordination(sc_db_path, kctl_conn)
 
-    with pytest.raises(ValueError, match="only durable candidates can be published"):
+    with pytest.raises(ValueError, match="use kctl publish --coordination"):
         _publish.publish_candidate(
             kctl_conn,
             candidate_id=cid,
@@ -121,6 +125,24 @@ def test_publish_rejects_coordination_candidate(sc_db_path, kctl_conn):
             tags=None,
             now=NOW2,
         )
+
+
+def test_publish_accepts_coordination_candidate_with_flag(sc_db_path, kctl_conn):
+    cid = _seed_approved_coordination(sc_db_path, kctl_conn)
+
+    entry = _publish.publish_candidate(
+        kctl_conn,
+        candidate_id=cid,
+        title="Handoff lesson",
+        body="Claim tokens need stronger recovery semantics.",
+        category="lesson",
+        tags='["ops"]',
+        now=NOW2,
+        coordination=True,
+    )
+
+    assert entry["source_kind"] == "coordination"
+    assert entry["category"] == "lesson"
 
 
 def test_publish_marks_superseded_entry(sc_db_path, kctl_conn):
@@ -201,7 +223,7 @@ def test_cli_render_sprint_filter(sc_db_path, kctl_conn, runner):
     assert "Sprint entry" in result_all.output
     assert "Sprint entry" in result_sprint1.output
     assert "Sprint entry" not in result_sprint9.output
-    assert "No published entries" in result_sprint9.output
+    assert "No published durable entries" in result_sprint9.output
 
 
 def test_list_entries_tag_filter(sc_db_path, kctl_conn):
@@ -213,6 +235,29 @@ def test_list_entries_tag_filter(sc_db_path, kctl_conn):
     auth = _db.list_entries(kctl_conn, tag="auth")
     assert len(auth) == 1
     assert auth[0]["title"] == "Tagged"
+
+
+def test_list_entries_source_kind_filter(sc_db_path, kctl_conn):
+    durable_cid = _seed_approved(sc_db_path, kctl_conn, "Durable entry")
+    _publish.publish_candidate(kctl_conn, durable_cid, None, "body", "decision", None, NOW2)
+
+    coordination_cid = _seed_approved_coordination(sc_db_path, kctl_conn, "Coordination lesson")
+    _publish.publish_candidate(
+        kctl_conn,
+        coordination_cid,
+        "Coordination lesson",
+        "body",
+        "lesson",
+        None,
+        NOW2,
+        coordination=True,
+    )
+
+    durable = _db.list_entries(kctl_conn, source_kind="durable")
+    coordination = _db.list_entries(kctl_conn, source_kind="coordination")
+
+    assert [row["title"] for row in durable] == ["Durable entry"]
+    assert [row["title"] for row in coordination] == ["Coordination lesson"]
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +274,7 @@ def test_cli_publish_command(sc_db_path, kctl_conn, runner):
     ])
     assert result.exit_code == 0, result.output
     assert "Published entry #" in result.output
+    assert "Stream: durable" in result.output
 
 
 def test_cli_publish_rejects_candidate(sc_db_path, kctl_conn, runner):
@@ -243,6 +289,20 @@ def test_cli_publish_rejects_candidate(sc_db_path, kctl_conn, runner):
         "publish", "--id", str(cid), "--body", "x", "--category", "decision",
     ])
     assert result.exit_code != 0
+
+
+def test_cli_publish_coordination_command(sc_db_path, kctl_conn, runner):
+    cid = _seed_approved_coordination(sc_db_path, kctl_conn)
+
+    result = runner.invoke(cli, [
+        "publish",
+        "--id", str(cid),
+        "--body", "Claim recovery failed during handoff.",
+        "--category", "lesson",
+        "--coordination",
+    ])
+    assert result.exit_code == 0, result.output
+    assert "Stream: coordination" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -265,6 +325,30 @@ def test_cli_render_outputs_markdown(sc_db_path, kctl_conn, runner):
     assert "sprint: 1" in result.output
 
 
+def test_cli_render_coordination_outputs_markdown(sc_db_path, kctl_conn, runner):
+    durable_cid = _seed_approved(sc_db_path, kctl_conn, "Durable entry")
+    _publish.publish_candidate(kctl_conn, durable_cid, "Durable entry", "durable body", "decision", None, NOW2)
+
+    coordination_cid = _seed_approved_coordination(sc_db_path, kctl_conn, "Coordination lesson")
+    _publish.publish_candidate(
+        kctl_conn,
+        coordination_cid,
+        "Coordination lesson",
+        "Claim tokens need stronger recovery semantics.",
+        "lesson",
+        '["ops"]',
+        NOW2,
+        coordination=True,
+    )
+
+    result = runner.invoke(cli, ["render", "--coordination"])
+    assert result.exit_code == 0, result.output
+    assert "# Knowledge Base Ops" in result.output
+    assert "Coordination lesson" in result.output
+    assert "Claim tokens need stronger recovery semantics." in result.output
+    assert "Durable entry" not in result.output
+
+
 def test_cli_render_json_output(sc_db_path, kctl_conn, runner):
     cid = _seed_approved(sc_db_path, kctl_conn, "JSON render entry")
     _publish.publish_candidate(
@@ -276,11 +360,34 @@ def test_cli_render_json_output(sc_db_path, kctl_conn, runner):
     data = json.loads(result.output)
     assert data["count"] == 1
     assert data["project"] == "homelab-analytics"
+    assert data["source_kind"] == "durable"
     assert data["entries"][0]["title"] == "Use RS256"
     assert data["entries"][0]["category"] == "decision"
     assert data["entries"][0]["tags"] == ["auth"]
     assert data["entries"][0]["source_track"] == "backend"
     assert data["entries"][0]["source_sprint_id"] == 1
+
+
+def test_cli_render_coordination_json_output(sc_db_path, kctl_conn, runner):
+    cid = _seed_approved_coordination(sc_db_path, kctl_conn, "Coordination lesson")
+    _publish.publish_candidate(
+        kctl_conn,
+        cid,
+        "Coordination lesson",
+        "Claim recovery needs an ops playbook.",
+        "lesson",
+        '["ops"]',
+        NOW2,
+        coordination=True,
+    )
+
+    result = runner.invoke(cli, ["render", "--coordination", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["source_kind"] == "coordination"
+    assert data["filters"]["source_kind"] == "coordination"
+    assert data["count"] == 1
+    assert data["entries"][0]["source_kind"] == "coordination"
 
 
 def test_cli_render_json_empty(runner):
@@ -337,7 +444,7 @@ def test_cli_render_uses_default_project_name(runner):
 def test_cli_render_empty(runner):
     result = runner.invoke(cli, ["render"])
     assert result.exit_code == 0
-    assert "No published entries" in result.output
+    assert "No published durable entries" in result.output
 
 
 def test_cli_render_to_file(sc_db_path, kctl_conn, runner, tmp_path):
