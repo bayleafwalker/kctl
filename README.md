@@ -33,23 +33,16 @@ kctl keeps these streams separate:
 | `durable` | `decision`, `pattern-noted`, `lesson-learned`, `risk-accepted`, `blocker-resolved` | yes | yes | yes |
 | `coordination` | `claim-handoff`, `claim-ownership-corrected`, `claim-ambiguity-detected`, `coordination-failure` | yes | yes, via `kctl publish --coordination` | yes, via `kctl render --coordination` |
 
-Coordination items still stay distinct from durable knowledge, but approved coordination lessons can now be promoted into a separate coordination knowledge base when they carry workflow-improvement value.
+Coordination items still stay distinct from durable knowledge, but approved coordination lessons can now be promoted when they carry workflow-improvement value.
+
+Repository policy can choose how those published coordination entries are rendered. One repository may keep a separate ops-oriented output such as `knowledge-base-ops.md`, while another may fold approved coordination knowledge into the same committed `knowledge-base.md` used for durable entries through a thin repo-local wrapper or publish step.
 
 ## The lifecycle
 
-```text
-sprintctl events
-      |
-      v
-kctl extract
-      |
-      +--> durable candidates ------> review ------> publish ------> render knowledge.md
-      |
-      +--> coordination candidates -> review ------> publish --coordination ------> render --coordination knowledge-base-ops.md
-      |
-      v
-agents read kctl artifacts and choose sprintctl actions
-```
+- durable candidates: `extract -> review -> publish -> render knowledge.md`
+- coordination candidates: `extract -> review -> publish --coordination -> render --coordination` into a repo-policy target
+
+Agents then read kctl artifacts and choose the relevant sprintctl actions.
 
 ## Acting on kctl artifacts
 
@@ -151,7 +144,7 @@ kctl publish \
   --body "Symmetric HMAC breaks when services don't share a secret rotation schedule. Switched to RS256 after repeated key sync failures." \
   --category decision
 
-# Publish approved coordination knowledge into the ops knowledge base
+# Publish approved coordination knowledge
 kctl publish \
   --id 7 \
   --body "Claim-token recovery failed during background handoff. Promote these lessons into an ops playbook instead of leaving them in review-only state." \
@@ -160,8 +153,15 @@ kctl publish \
 
 # Render published entries to markdown
 kctl render --output knowledge.md
+
+# One valid repo policy: keep coordination in a separate file
 kctl render --coordination --output knowledge-base-ops.md
-git add knowledge.md
+
+# Another valid repo policy: keep kctl's separate stream rendering,
+# then combine durable + approved coordination entries in a repo-local wrapper
+# before writing the single committed knowledge-base.md
+
+# Commit the rendered knowledge file or files your repo policy uses
 ```
 
 ## Commands
@@ -230,7 +230,7 @@ kctl publish --id 12 --body "..." --category lesson --coordination
 
 Promotes an approved candidate to a knowledge entry. Requires `--body` and `--category`. `--title` defaults to the candidate summary if omitted. `--tags` defaults to the candidate tags if omitted.
 
-Coordination candidates require `--coordination`. That keeps durable publication as the default path while making workflow lessons publishable into a distinct rendered target.
+Coordination candidates require `--coordination`. That keeps durable publication as the default path while making workflow lessons publishable without forcing a single repository policy for rendered output.
 
 Categories:
 - `decision`
