@@ -1,7 +1,7 @@
 ---
 doc_id: kctl.knowledge-lifecycle
 status: draft
-supersedes: []
+supersedes: null
 ---
 
 # Knowledge lifecycle protocol
