@@ -14,5 +14,8 @@ kctl = "kctl.cli:cli"
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
+[tool.setuptools]
+packages = ["kctl"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

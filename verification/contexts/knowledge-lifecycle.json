@@ -1,0 +1,39 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.lifecycle",
+  "owner_repo": "kctl",
+  "subject": "knowledge-candidate-and-entry",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-lifecycle",
+    "revision": "sha256:1110667ba3c566b3937435940796aa0066bf59c8392beb4a218a78504e6929bd"
+  },
+  "source_of_truth": "sqlite-knowledge-store",
+  "depth": 1,
+  "backends": ["sqlite"],
+  "actors": ["extractor", "reviewer", "publisher"],
+  "initial_state": ["source events exist", "scope watermark is behind source", "no candidate exists for source event"],
+  "operations": [
+    { "name": "extract", "actors": ["extractor"], "synchronization": "sequential-model-step" },
+    { "name": "approve-or-reject", "actors": ["reviewer"], "synchronization": "sequential-model-step" },
+    { "name": "publish", "actors": ["publisher"], "synchronization": "fault-hook-between-commits" },
+    { "name": "render", "actors": ["publisher"], "synchronization": "after-state-transition" }
+  ],
+  "consistency": { "target": "application-invariant", "object": "knowledge-lifecycle" },
+  "assumptions": { "isolation": "single-writer-sqlite", "clock": "process-supplied-timestamps", "fairness": "not-applicable" },
+  "bounds": { "events": 50, "scopes": 8, "operation_sequences": 500 },
+  "invariants": [
+    "at-most-one-candidate-per-source-event",
+    "scope-watermarks-do-not-interfere",
+    "candidate-transition-graph-holds",
+    "only-approved-candidates-publish",
+    "render-is-a-projection-of-published-state"
+  ],
+  "faults": [
+    "crash-after-candidate-commit-before-watermark",
+    "crash-after-entry-insert-before-candidate-transition",
+    "crash-after-supersession-before-candidate-transition"
+  ],
+  "oracles": ["reference-state-machine", "source-event-id-set", "sqlite-invariant-query", "rendered-entry-id-set"],
+  "implementation_anchors": ["kctl/extract.py:extract_candidates", "kctl/db.py:transition_candidate", "kctl/publish.py:publish_candidate"],
+  "expansions": ["semantic-doc", "stateful-test", "fault-scenario"]
+}

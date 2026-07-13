@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "repo_id": "kctl",
+  "adoption_level": "guidance-only",
+  "routing": {
+    "default_harness": "codex",
+    "default_model_alias": "fast-build",
+    "action_classes": {
+      "plan": { "enabled": true, "model_alias": "frontier-plan" },
+      "build": { "enabled": true, "model_alias": "fast-build", "review_required": true },
+      "review": { "enabled": true, "model_alias": "review-synthesis" },
+      "verify": { "enabled": true, "model_alias": "review-synthesis", "review_required": true },
+      "reconcile": { "enabled": true, "model_alias": "review-synthesis" }
+    }
+  },
+  "skills": {
+    "template_root": "/projects/dev/agentops/templates/dispatch/skills",
+    "selected": [
+      "dispatch-plan",
+      "dispatch-build",
+      "dispatch-review",
+      "code-change-verification",
+      "verify-state-protocols",
+      "reconcile-project-contracts"
+    ],
+    "overlays": [".agents/overlays/kctl.state-protocols.md"]
+  },
+  "scope": {
+    "allowed_path_roots": ["kctl/", "tests/", "docs/", "verification/", ".agents/"],
+    "out_of_scope": ["sprintctl backlog or claim mutation from kctl verification"]
+  },
+  "risk_surfaces": [
+    {
+      "id": "knowledge-lifecycle",
+      "paths": ["kctl/**", "tests/**"],
+      "skills": ["verify-state-protocols", "reconcile-project-contracts"],
+      "default_depth": 1,
+      "required_on_change": true
+    }
+  ],
+  "verification": {
+    "command_families": ["unit", "docs", "full-suite"],
+    "targeted_first": true,
+    "commands": [
+      "uv run pytest <specific-test-files> -x --tb=short",
+      "python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root ."
+    ]
+  },
+  "hooks": {
+    "level": "verification",
+    "publishers": ["git", "dispatcher-gate"]
+  }
+}
