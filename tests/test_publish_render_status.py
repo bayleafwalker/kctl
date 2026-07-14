@@ -349,7 +349,8 @@ def test_cli_render_coordination_outputs_markdown(sc_db_path, kctl_conn, runner)
     assert "Durable entry" not in result.output
 
 
-def test_cli_render_json_output(sc_db_path, kctl_conn, runner):
+def test_cli_render_json_output(sc_db_path, kctl_conn, runner, monkeypatch):
+    monkeypatch.setenv("KCTL_PROJECT", "homelab-analytics")
     cid = _seed_approved(sc_db_path, kctl_conn, "JSON render entry")
     _publish.publish_candidate(
         kctl_conn, cid, "Use RS256", "RS256 is better.", "decision", '["auth"]', NOW2,
@@ -434,11 +435,42 @@ def test_cli_render_shows_superseded_entry_link(sc_db_path, kctl_conn, runner):
     assert f"Superseded by: entry #{new_entry['id']}" in result.output
 
 
-def test_cli_render_uses_default_project_name(runner):
-    """KCTL_PROJECT defaults to 'homelab-analytics', not 'project'."""
+def test_cli_render_uses_enclosing_repo_name_as_default_project(runner, tmp_path, monkeypatch):
+    """KCTL_PROJECT defaults to the enclosing git repo's directory name, not a
+    fixed project — kctl is used across many repos sharing one postgres
+    backend, so a single hardcoded default silently mislabels every other
+    repo's render."""
+    monkeypatch.delenv("KCTL_PROJECT", raising=False)
+    repo_dir = tmp_path / "some-other-repo"
+    repo_dir.mkdir()
+    (repo_dir / ".git").mkdir()
+    monkeypatch.chdir(repo_dir)
+
     result = runner.invoke(cli, ["render"])
     assert result.exit_code == 0
-    assert "homelab-analytics" in result.output
+    assert "some-other-repo" in result.output
+
+
+def test_cli_render_default_project_is_unknown_outside_a_repo(runner, tmp_path, monkeypatch):
+    monkeypatch.delenv("KCTL_PROJECT", raising=False)
+    monkeypatch.chdir(tmp_path)  # no .git anywhere above this directory
+
+    result = runner.invoke(cli, ["render"])
+    assert result.exit_code == 0
+    assert "unknown" in result.output
+
+
+def test_cli_render_explicit_kctl_project_wins_over_repo_name(runner, tmp_path, monkeypatch):
+    repo_dir = tmp_path / "some-other-repo"
+    repo_dir.mkdir()
+    (repo_dir / ".git").mkdir()
+    monkeypatch.chdir(repo_dir)
+    monkeypatch.setenv("KCTL_PROJECT", "explicit-name")
+
+    result = runner.invoke(cli, ["render"])
+    assert result.exit_code == 0
+    assert "explicit-name" in result.output
+    assert "some-other-repo" not in result.output
 
 
 def test_cli_render_empty(runner):

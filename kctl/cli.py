@@ -19,6 +19,21 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _resolve_default_project() -> str:
+    """Best-effort project name when KCTL_PROJECT isn't set: the name of the
+    enclosing git repo's directory, or "unknown" outside any repo.
+
+    Dependency-free (no sprintctl import) so this stays correct even when
+    kctl is used standalone, mirroring how local-mode backend resolution
+    never requires the sprintctl package either.
+    """
+    current = Path.cwd()
+    for directory in (current, *current.parents):
+        if (directory / ".git").exists():
+            return directory.name
+    return "unknown"
+
+
 def _format_tags(tags_json: str | None) -> str:
     if not tags_json:
         return ""
@@ -473,7 +488,7 @@ def render_cmd(obj, category, coordination, tag, sprint_id, output, output_json)
         source_kind=source_kind,
     )
 
-    project = os.environ.get("KCTL_PROJECT", "homelab-analytics")
+    project = os.environ.get("KCTL_PROJECT") or _resolve_default_project()
     if output_json:
         counts_by_category: dict[str, int] = {}
         for entry in entries:
