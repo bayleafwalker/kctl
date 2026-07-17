@@ -70,6 +70,11 @@ kctl render --sprint-id N                           # durable knowledge from one
 
 An agent shaping sprint work can read kctl artifacts, inspect source track, sprint, provenance, and coordination context, then choose the relevant sprintctl action. kctl is the reader and reviewer; sprintctl remains the writer.
 
+For cockpit consumption, the versioned knowledge-artifact/v1 contract defines
+a separate published-entry NDJSON projection under
+_artifacts/<repo>/knowledge/. The contract is intentionally read-only; its
+exporter is delivered separately from the existing render --json command.
+
 ## Requirements
 
 - Python 3.11+

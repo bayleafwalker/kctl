@@ -1,0 +1,66 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.artifact",
+  "owner_repo": "kctl",
+  "subject": "published-knowledge-artifact",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-artifact",
+    "revision": "sha256:be1cdec3dd0ca1827120aa6883de54eb8882a68b8cce3553543b4bdcf9edf070"
+  },
+  "source_of_truth": "sqlite-knowledge-entry-plus-candidate",
+  "depth": 0,
+  "backends": ["sqlite", "ndjson"],
+  "actors": ["publisher", "artifact-exporter", "cockpit-reader"],
+  "initial_state": ["a published kctl entry exists", "the artifact destination may be absent"],
+  "operations": [
+    {
+      "name": "export-published-snapshot",
+      "actors": ["artifact-exporter"],
+      "synchronization": "single-writer-atomic-replace"
+    },
+    {
+      "name": "read-published-snapshot",
+      "actors": ["cockpit-reader"],
+      "synchronization": "read-only"
+    }
+  ],
+  "consistency": {
+    "target": "projection-contract",
+    "object": "knowledge-artifact-v1"
+  },
+  "assumptions": {
+    "isolation": "single-writer-sqlite",
+    "clock": "exporter-supplied-UTC-timestamp",
+    "fairness": "not-applicable"
+  },
+  "bounds": {
+    "records": 1000,
+    "streams": 2,
+    "operation_sequences": 1
+  },
+  "invariants": [
+    "one-record-per-published-entry-per-snapshot",
+    "published-content-and-source-are-read-only",
+    "artifact-identity-is-repo-id-plus-entry-id",
+    "interrupted-export-keeps-a-complete-snapshot"
+  ],
+  "faults": [
+    "interrupted-before-atomic-replace",
+    "malformed-record-observed-by-reader",
+    "artifact-root-unavailable"
+  ],
+  "oracles": [
+    "json-schema",
+    "content-digest",
+    "published-entry-id-set"
+  ],
+  "implementation_anchors": [
+    "kctl/db.py:list_entries",
+    "kctl/db.py:get_candidate",
+    "kctl/cli.py:_entry_json"
+  ],
+  "expansions": [
+    "exporter-unit-test",
+    "cockpit-reader-contract-test"
+  ]
+}
