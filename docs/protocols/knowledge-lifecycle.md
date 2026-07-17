@@ -8,7 +8,7 @@ supersedes: null
 
 ## Boundary and ownership
 
-kctl reads sprintctl events without mutating sprintctl. Its authoritative state is the local SQLite store containing extraction watermarks, candidates, published entries, and supersession links. Rendered Markdown and JSON are derived projections.
+kctl reads sprintctl events without mutating sprintctl. Its authoritative state is the local SQLite store containing extraction watermarks, candidates, published entries, and supersession links. Rendered Markdown, JSON, and knowledge-artifact/v1 NDJSON are derived projections.
 
 ## Extraction
 
@@ -38,6 +38,12 @@ These writes currently commit separately. A crash can therefore leave an entry c
 
 Rendered output is a view of published entries selected by kind, category, tag, or sprint. It must not imply that candidate or approved entries are published. Superseded entries remain part of history and are annotated rather than deleted.
 
+The knowledge-artifact/v1 exporter writes a complete NDJSON projection of both
+published streams with atomic replacement. It is read-only: it does not
+advance a watermark, transition a candidate, or repair an incomplete
+publication. A missing or malformed artifact is a reader-side degradation,
+not evidence that kctl state changed.
+
 ## Safety properties
 
 - One source event produces at most one stored candidate.
@@ -46,6 +52,8 @@ Rendered output is a view of published entries selected by kind, category, tag, 
 - Only approved candidates are eligible for publication.
 - A supersession target exists and cannot be the new entry itself.
 - Rendered knowledge includes only state permitted by the selected published stream.
+- The knowledge-artifact/v1 snapshot contains one record per published entry
+  and preserves source and supersession references.
 
 ## Liveness and recovery
 
@@ -53,6 +61,9 @@ Rendered output is a view of published entries selected by kind, category, tag, 
 - Extraction progresses when invoked and the source database remains readable.
 - Partial extraction converges on rerun through source-event deduplication.
 - Partial publication requires explicit reconciliation; blind retry is unsafe.
+- An interrupted artifact export preserves either the previous complete
+  snapshot or a subsequent complete replacement; it never requires lifecycle
+  repair.
 
 ## Evidence
 

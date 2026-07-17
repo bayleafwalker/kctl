@@ -64,11 +64,31 @@ kctl review list --status approved --json           # approved durable candidate
 kctl review show --id 42 --json                     # one candidate with full source context
 kctl review list --kind coordination --json         # coordination review stream
 kctl render --json                                  # durable knowledge entries as structured JSON
+kctl export --artifacts-root /path/to/_artifacts --repo-id my-project
 kctl preflight --json                               # stale-item warnings as structured JSON
 kctl render --sprint-id N                           # durable knowledge from one sprint
 ```
 
 An agent shaping sprint work can read kctl artifacts, inspect source track, sprint, provenance, and coordination context, then choose the relevant sprintctl action. kctl is the reader and reviewer; sprintctl remains the writer.
+
+For cockpit consumption, the versioned knowledge-artifact/v1 contract defines
+a separate published-entry NDJSON projection under
+_artifacts/<repo>/knowledge/. The contract is intentionally read-only; its
+exporter is delivered separately from the existing render --json command.
+
+### Cockpit artifact export
+
+The optional export command writes one complete, read-only NDJSON snapshot of
+all published durable and coordination entries. It requires an explicit
+artifact root and repository scope (or the KCTL_ARTIFACTS_ROOT and
+KCTL_PROJECT environment variables):
+
+    kctl export --artifacts-root /projects/dev/_artifacts --repo-id agentops
+
+The destination is _artifacts/<repo>/knowledge/knowledge-artifact-v1.ndjson.
+Each rerun atomically replaces the complete snapshot; it never appends
+records. See docs/protocols/knowledge-artifact-v1.md for the stable consumer
+contract.
 
 ## Requirements
 

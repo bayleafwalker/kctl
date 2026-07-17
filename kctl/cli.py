@@ -6,6 +6,7 @@ from pathlib import Path
 
 import click
 
+from . import artifact as _artifact
 from . import db as _db
 from . import extract as _extract
 from . import publish as _publish
@@ -549,6 +550,42 @@ def render_cmd(obj, category, coordination, tag, sprint_id, output, output_json)
         click.echo(f"Wrote {len(entries)} entry/entries to {output}")
     else:
         click.echo(content)
+
+
+# ---------------------------------------------------------------------------
+# export
+# ---------------------------------------------------------------------------
+
+@cli.command("export")
+@click.option(
+    "--artifacts-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=lambda: os.environ.get("KCTL_ARTIFACTS_ROOT"),
+    help="Artifact root (default: KCTL_ARTIFACTS_ROOT)",
+)
+@click.option(
+    "--repo-id",
+    default=lambda: os.environ.get("KCTL_PROJECT"),
+    help="Repository scope (default: KCTL_PROJECT)",
+)
+@click.pass_obj
+def export_cmd(obj, artifacts_root, repo_id) -> None:
+    """Write the complete read-only knowledge-artifact/v1 snapshot."""
+    if artifacts_root is None:
+        raise click.UsageError("--artifacts-root or KCTL_ARTIFACTS_ROOT is required")
+    if not repo_id:
+        raise click.UsageError("--repo-id or KCTL_PROJECT is required")
+    try:
+        output_path, count = _artifact.export_snapshot(
+            obj["conn"],
+            artifacts_root=artifacts_root,
+            repo_id=repo_id,
+            rendered_at=_now(),
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Wrote {count} published entry/entries to {output_path}")
 
 
 # ---------------------------------------------------------------------------
