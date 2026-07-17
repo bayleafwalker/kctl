@@ -5,11 +5,11 @@
   "subject": "knowledge-candidate-and-entry",
   "contract_ref": {
     "doc_id": "kctl.knowledge-lifecycle",
-    "revision": "sha256:eaa596ce87e8c4ef8c49138498f6b4c18931f9f36f650711f17f6fc2705859e5"
+    "revision": "sha256:56b55490d0371a4ef6253276abf0c596954b64c79f158024878459042b32f0a8"
   },
   "source_of_truth": "sqlite-knowledge-store",
   "depth": 1,
-  "backends": ["sqlite"],
+  "backends": ["sqlite", "remote-postgres-read-only"],
   "actors": ["extractor", "reviewer", "publisher"],
   "initial_state": ["source events exist", "scope watermark is behind source", "no candidate exists for source event"],
   "operations": [
@@ -25,6 +25,7 @@
   "invariants": [
     "at-most-one-candidate-per-source-event",
     "scope-watermarks-do-not-interfere",
+    "remote-extraction-never-writes-sprintctl",
     "candidate-transition-graph-holds",
     "only-approved-candidates-publish",
     "render-is-a-projection-of-published-state",
@@ -37,6 +38,6 @@
     "interrupted-before-artifact-atomic-replace"
   ],
   "oracles": ["reference-state-machine", "source-event-id-set", "sqlite-invariant-query", "rendered-entry-id-set", "artifact-entry-id-set"],
-  "implementation_anchors": ["kctl/extract.py:extract_candidates", "kctl/db.py:transition_candidate", "kctl/publish.py:publish_candidate", "kctl/artifact.py:export_snapshot"],
+  "implementation_anchors": ["kctl/extract.py:extract_candidates", "kctl/source.py:RemoteSprintctlSource", "kctl/db.py:transition_candidate", "kctl/publish.py:publish_candidate", "kctl/artifact.py:export_snapshot"],
   "expansions": ["semantic-doc", "stateful-test", "fault-scenario", "artifact-contract"]
 }

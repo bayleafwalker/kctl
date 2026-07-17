@@ -11,6 +11,7 @@ from . import db as _db
 from . import extract as _extract
 from . import publish as _publish
 from . import review as _review
+from . import source as _source
 
 
 def _now() -> str:
@@ -158,61 +159,59 @@ def cli(ctx: click.Context) -> None:
 @click.option(
     "--sprintctl-db",
     default=None,
-    help="Path to sprintctl DB (default: SPRINTCTL_DB env var or ~/.sprintctl/sprintctl.db)",
+    help="Path to a local sprintctl DB (overrides SPRINTCTL_BACKEND)",
+)
+@click.option(
+    "--sprintctl-repo-id",
+    default=None,
+    help="Remote sprintctl repo ID (default: KCTL_SPRINTCTL_REPO_ID or current repository)",
 )
 @click.option("--no-preflight", is_flag=True, default=False, help="Skip sprintctl maintain check")
 @click.pass_obj
-def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, no_preflight) -> None:
+def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, sprintctl_repo_id, no_preflight) -> None:
     """Extract knowledge candidates from sprintctl events."""
     kctl_conn = obj["conn"]
     now = _now()
 
-    sc_db_path = Path(sprintctl_db) if sprintctl_db else _extract.get_sprintctl_db_path()
-    if not sc_db_path.exists():
-        click.echo(f"Error: sprintctl DB not found at {sc_db_path}", err=True)
-        sys.exit(1)
-
     try:
-        sc_conn = _db.get_sprintctl_connection(sc_db_path)
-    except Exception as exc:
-        click.echo(f"Error: could not open sprintctl DB: {exc}", err=True)
-        sys.exit(1)
-
-    try:
-        _db.validate_sprintctl_schema(sc_conn)
-    except ValueError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        sys.exit(1)
-
-    if not no_preflight:
-        warnings = _extract.run_preflight(
-            sc_conn,
-            sprint_id=sprint_id,
-            sprintctl_db_path=sc_db_path,
+        source = _source.open_sprintctl_source(
+            sprintctl_db=sprintctl_db,
+            remote_repo_id=sprintctl_repo_id,
         )
-        for w in warnings:
-            click.echo(f"Warning: {w}", err=True)
-
-    try:
-        event_type_set = _extract.resolve_event_types(event_types)
-    except ValueError as exc:
+    except _source.SprintctlSourceError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    scope_key = _extract.build_scope_key(event_type_set, sprint_id)
-    state = _db.get_extractor_state(kctl_conn, str(sc_db_path), scope_key=scope_key)
-    since_event_id = 0 if full or state is None else state["last_event_id"]
+    try:
+        if not no_preflight:
+            warnings = _extract.run_preflight_for_source(
+                source,
+                sprint_id=sprint_id,
+            )
+            for w in warnings:
+                click.echo(f"Warning: {w}", err=True)
 
-    created, structured_count = _extract.extract_candidates(
-        sprintctl_conn=sc_conn,
-        kctl_conn=kctl_conn,
-        sprintctl_db_path=str(sc_db_path),
-        event_types=event_type_set,
-        since_event_id=since_event_id,
-        sprint_id=sprint_id,
-        now=now,
-    )
-    sc_conn.close()
+        try:
+            event_type_set = _extract.resolve_event_types(event_types)
+        except ValueError as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+
+        scope_key = _extract.build_scope_key(event_type_set, sprint_id)
+        state = _db.get_extractor_state(kctl_conn, source.source_id, scope_key=scope_key)
+        since_event_id = 0 if full or state is None else state["last_event_id"]
+
+        created, structured_count = _extract.extract_candidates(
+            sprintctl_conn=source,
+            kctl_conn=kctl_conn,
+            sprintctl_db_path=source.source_id,
+            event_types=event_type_set,
+            since_event_id=since_event_id,
+            sprint_id=sprint_id,
+            now=now,
+        )
+    finally:
+        source.close()
 
     total = len(created)
     bare_count = total - structured_count
@@ -707,34 +706,20 @@ def status_cmd(obj, sprint_id, kind, output_json) -> None:
 @click.option(
     "--sprintctl-db",
     default=None,
-    help="Path to sprintctl DB",
+    help="Path to a local sprintctl DB (overrides SPRINTCTL_BACKEND)",
 )
+@click.option("--sprintctl-repo-id", default=None, help="Remote sprintctl repo ID")
 @click.option("--sprint-id", type=int, default=None, help="Scope check to one sprint")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
-def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
+def preflight_cmd(obj, sprintctl_db, sprintctl_repo_id, sprint_id, output_json) -> None:
     """Run sprintctl maintain check and report results."""
-    sc_db_path = Path(sprintctl_db) if sprintctl_db else _extract.get_sprintctl_db_path()
-    if not sc_db_path.exists():
-        if output_json:
-            click.echo(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "sprint_id": sprint_id,
-                        "warnings": [],
-                        "error": f"sprintctl DB not found at {sc_db_path}",
-                    }
-                )
-            )
-        else:
-            click.echo(f"Error: sprintctl DB not found at {sc_db_path}", err=True)
-        sys.exit(1)
-
     try:
-        sc_conn = _db.get_sprintctl_connection(sc_db_path)
-        _db.validate_sprintctl_schema(sc_conn)
-    except Exception as exc:
+        source = _source.open_sprintctl_source(
+            sprintctl_db=sprintctl_db,
+            remote_repo_id=sprintctl_repo_id,
+        )
+    except _source.SprintctlSourceError as exc:
         if output_json:
             click.echo(
                 json.dumps(
@@ -750,12 +735,10 @@ def preflight_cmd(obj, sprintctl_db, sprint_id, output_json) -> None:
             click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    warnings = _extract.run_preflight(
-        sc_conn,
-        sprint_id=sprint_id,
-        sprintctl_db_path=sc_db_path,
-    )
-    sc_conn.close()
+    try:
+        warnings = _extract.run_preflight_for_source(source, sprint_id=sprint_id)
+    finally:
+        source.close()
     preflight_failure = next(
         (warning for warning in warnings if warning.startswith("Preflight check failed:")),
         None,

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import db as _db
+from .source import LocalSprintctlSource, RemoteSprintctlSource
 
 DEFAULT_DURABLE_EVENT_TYPES = {
     "decision",
@@ -115,30 +116,37 @@ def extract_candidates(
         raise ValueError("Event type filter cannot be empty")
 
     scope_key = build_scope_key(event_types, sprint_id)
-    placeholders = ",".join("?" * len(event_types))
-    params: list = [since_event_id, *event_types]
+    if hasattr(sprintctl_conn, "fetch_events"):
+        events = sprintctl_conn.fetch_events(
+            since_event_id=since_event_id,
+            event_types=event_types,
+            sprint_id=sprint_id,
+        )
+    else:
+        placeholders = ",".join("?" * len(event_types))
+        params: list = [since_event_id, *event_types]
 
-    sprint_filter = ""
-    if sprint_id is not None:
-        sprint_filter = " AND e.sprint_id = ?"
-        params.append(sprint_id)
+        sprint_filter = ""
+        if sprint_id is not None:
+            sprint_filter = " AND e.sprint_id = ?"
+            params.append(sprint_id)
 
-    query = f"""
-        SELECT
-            e.id, e.sprint_id, e.work_item_id, e.source_type, e.actor,
-            e.event_type, e.payload, e.created_at,
-            wi.title AS item_title,
-            t.name   AS track_name
-        FROM event e
-        LEFT JOIN work_item wi ON e.work_item_id = wi.id
-        LEFT JOIN track t      ON wi.track_id = t.id
-        WHERE e.id > ?
-          AND e.event_type IN ({placeholders})
-          {sprint_filter}
-        ORDER BY e.id ASC
-    """
+        query = f"""
+            SELECT
+                e.id, e.sprint_id, e.work_item_id, e.source_type, e.actor,
+                e.event_type, e.payload, e.created_at,
+                wi.title AS item_title,
+                t.name   AS track_name
+            FROM event e
+            LEFT JOIN work_item wi ON e.work_item_id = wi.id
+            LEFT JOIN track t      ON wi.track_id = t.id
+            WHERE e.id > ?
+              AND e.event_type IN ({placeholders})
+              {sprint_filter}
+            ORDER BY e.id ASC
+        """
 
-    events = sprintctl_conn.execute(query, params).fetchall()
+        events = sprintctl_conn.execute(query, params).fetchall()
 
     created = []
     structured_count = 0
@@ -307,3 +315,39 @@ def run_preflight(
         return _run_preflight_via_cli(sprintctl_conn, sprintctl_db_path, sprint_id)
     except Exception as cli_exc:  # noqa: BLE001
         return [f"Preflight check failed: {cli_exc}"]
+
+
+def run_preflight_for_source(
+    source: LocalSprintctlSource | RemoteSprintctlSource,
+    *,
+    sprint_id: int | None = None,
+) -> list[str]:
+    """Run sprintctl's stale-item diagnostic without giving kctl write access."""
+    if isinstance(source, LocalSprintctlSource):
+        return run_preflight(
+            source.conn,
+            sprint_id=sprint_id,
+            sprintctl_db_path=source.path,
+        )
+
+    targets = source.list_preflight_targets(sprint_id)
+    if sprint_id is not None and not targets:
+        return [f"Preflight check failed: Sprint #{sprint_id} not found"]
+    try:
+        # Reuse sprintctl's diagnostic logic, but deliberately do not call its
+        # CLI or init_db: either can bootstrap the remote schema. The source
+        # connection itself is opened with default_transaction_read_only=on.
+        from sprintctl import maintain as sc_maintain  # type: ignore[import]
+        from sprintctl import pg as sc_pg  # type: ignore[import]
+
+        store = sc_pg.PgStore(conn=source.conn, repo_id=source.repo_id)
+        now = datetime.now(timezone.utc)
+        warnings: list[str] = []
+        for target in targets:
+            report = sc_maintain.check(store, target["id"], now, _m=sc_pg)
+            warning = _build_warning_from_report(report)
+            if warning:
+                warnings.append(warning)
+        return warnings
+    except Exception as exc:  # noqa: BLE001
+        return [f"Preflight check failed: {exc}"]

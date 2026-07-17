@@ -12,7 +12,7 @@ kctl reads sprintctl events without mutating sprintctl. Its authoritative state 
 
 ## Extraction
 
-Extraction is scoped by sprint ID and the effective event-type set. Each scope has an independent watermark. A candidate is uniquely keyed by the sprintctl source event ID.
+Extraction is scoped by sprint ID and the effective event-type set. Each scope has an independent watermark. A candidate is uniquely keyed by the sprintctl source event ID. The source may be a local SQLite database or a tenant-scoped remote PostgreSQL read connection; remote watermark keys identify the repository as `remote://<repo_id>` and never persist its connection URL.
 
 The implementation may commit candidate rows before committing the new watermark. After interruption, rerunning the same scope can revisit events; duplicate candidate inserts are ignored by the source-event uniqueness constraint. This provides restartable at-least-once scanning with an at-most-one stored candidate per source event.
 
@@ -58,7 +58,7 @@ not evidence that kctl state changed.
 ## Liveness and recovery
 
 - No concurrent-writer progress or fairness guarantee is made.
-- Extraction progresses when invoked and the source database remains readable.
+- Extraction progresses when invoked and the source database remains readable. Remote extraction uses a transaction-default read-only connection and never bootstraps or writes sprintctl schema or state.
 - Partial extraction converges on rerun through source-event deduplication.
 - Partial publication requires explicit reconciliation; blind retry is unsafe.
 - An interrupted artifact export preserves either the previous complete
