@@ -34,6 +34,7 @@
       "id": "knowledge-lifecycle",
       "paths": ["kctl/**", "tests/**"],
       "skills": ["verify-state-protocols", "reconcile-project-contracts"],
+      "context_ids": ["kctl.knowledge.lifecycle", "kctl.knowledge.artifact"],
       "default_depth": 1,
       "required_on_change": true
     }
