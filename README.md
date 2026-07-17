@@ -119,6 +119,15 @@ export KCTL_PROJECT=my-project              # rendered output header label
 export KCTL_EVENT_TYPES=decision,pattern-noted,lesson-learned
 ```
 
+For a sprintctl PostgreSQL remote source, install `kctl[remote]` and set
+`SPRINTCTL_BACKEND=remote` plus `SPRINTCTL_URL`. kctl reads that source through
+a connection whose transactions are read-only; it never bootstraps or writes
+the sprintctl schema. Its extraction watermark is keyed as
+`remote://<repo_id>` (not by the URL), so credentials are never persisted in
+the kctl database. The repo ID defaults to the current repository; set
+`KCTL_SPRINTCTL_REPO_ID` or pass `--sprintctl-repo-id` when reading another
+repository.
+
 If `KCTL_EVENT_TYPES` is unset, kctl extracts these defaults:
 
 - durable: `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`
@@ -351,7 +360,10 @@ tests/
   test_publish_render_status.py
 ```
 
-kctl owns its own SQLite database and never writes to sprintctl's. The sprintctl connection is always opened read-only. Durable knowledge and coordination items share extraction infrastructure but are stored and reviewed as separate streams.
+kctl owns its own SQLite database and never writes to sprintctl's. Its local
+SQLite and remote PostgreSQL source connections are always opened read-only.
+Durable knowledge and coordination items share extraction infrastructure but
+are stored and reviewed as separate streams.
 
 ## Relationship to sprintctl
 
