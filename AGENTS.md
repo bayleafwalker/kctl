@@ -36,3 +36,7 @@ Use the shared `verify-state-protocols` skill when changes affect extraction wat
 Use `survey` and `reconcile` read-only. Verification may add tests and model artifacts but must not silently repair lifecycle semantics. Preserve current limitations in reports: extraction is restartable through source-event deduplication, while publication currently spans multiple SQLite commits and is not an atomic or idempotent command.
 
 The machine-readable routing and hook policy is `kctl.dispatch.json`. Validate reusable packets with `python /projects/dev/agentops/templates/dispatch/scripts/validate_verification_artifacts.py --root .`.
+
+<!-- agentops-project-pointer:start -->
+See `.agents/project.generated.md` for cross-repo project context (agentops-managed; do not hand-edit).
+<!-- agentops-project-pointer:end -->
