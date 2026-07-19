@@ -2,6 +2,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
+from typing import Callable, Union
 
 VALID_CANDIDATE_TRANSITIONS: dict[str, set[str]] = {
     "candidate": {"approved", "rejected"},
@@ -23,7 +24,22 @@ COORDINATION_EVENT_TYPES = {
     "coordination-failure",
 }
 
-_MIGRATIONS: list[str] = [
+def _migrate_7_fix_source_kind_column_name(conn: sqlite3.Connection) -> None:
+    """Repair knowledge_entry.source_candidate_kind -> source_kind (see migration 7 note)."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(knowledge_entry)")}
+    if "source_kind" in columns:
+        return
+    if "source_candidate_kind" in columns:
+        conn.execute(
+            "ALTER TABLE knowledge_entry RENAME COLUMN source_candidate_kind TO source_kind"
+        )
+    else:
+        conn.execute(
+            "ALTER TABLE knowledge_entry ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'durable'"
+        )
+
+
+_MIGRATIONS: list[Union[str, Callable[[sqlite3.Connection], None]]] = [
     # Migration 1: initial schema (Phase 1 + Phase 2 tables pre-created)
     """
     CREATE TABLE IF NOT EXISTS knowledge_candidate (
@@ -124,6 +140,13 @@ _MIGRATIONS: list[str] = [
         'durable'
     )
     """,
+    # Migration 7: repair DBs where an earlier revision of migration 6 created
+    # knowledge_entry.source_candidate_kind instead of source_kind. That column
+    # was renamed in source without bumping the migration version, so any DB
+    # that had already run migration 6 under the old name never picked up the
+    # rename (schema_version stayed at 6, the version check never re-triggers
+    # it). Conditional on prior state, so this must run in Python, not raw SQL.
+    _migrate_7_fix_source_kind_column_name,
 ]
 
 
@@ -164,13 +187,16 @@ def init_db(conn: sqlite3.Connection) -> None:
     else:
         current = row[0]
 
-    for i, migration_sql in enumerate(_MIGRATIONS):
+    for i, migration in enumerate(_MIGRATIONS):
         target_version = i + 1
         if current < target_version:
-            for statement in migration_sql.split(";"):
-                stmt = statement.strip()
-                if stmt:
-                    conn.execute(stmt)
+            if callable(migration):
+                migration(conn)
+            else:
+                for statement in migration.split(";"):
+                    stmt = statement.strip()
+                    if stmt:
+                        conn.execute(stmt)
             conn.execute("UPDATE schema_version SET version = ?", (target_version,))
             current = target_version
 
