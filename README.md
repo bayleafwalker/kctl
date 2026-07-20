@@ -65,6 +65,7 @@ kctl review show --id 42 --json                     # one candidate with full so
 kctl review list --kind coordination --json         # coordination review stream
 kctl render --json                                  # durable knowledge entries as structured JSON
 kctl export --artifacts-root /path/to/_artifacts --repo-id my-project
+kctl export-proposal --artifacts-root /path/to/_artifacts --repo-id my-project  # approved-but-unpublished proposals
 kctl preflight --json                               # stale-item warnings as structured JSON
 kctl render --sprint-id N                           # durable knowledge from one sprint
 ```
@@ -89,6 +90,24 @@ The destination is _artifacts/<repo>/knowledge/knowledge-artifact-v1.ndjson.
 Each rerun atomically replaces the complete snapshot; it never appends
 records. See docs/protocols/knowledge-artifact-v1.md for the stable consumer
 contract.
+
+### Backlog proposal export
+
+`kctl export-proposal` writes a second, separate read-only NDJSON snapshot of
+`approved`-but-not-yet-published candidates, shaped as bounded suggestions
+for backlog refinement rather than sprintctl command output:
+
+    kctl export-proposal --artifacts-root /projects/dev/_artifacts --repo-id kctl
+
+The destination is _artifacts/<repo>/knowledge/knowledge-proposal-v1.ndjson.
+Each record carries the reviewed content, its sprintctl provenance, and a
+suggested owner repo plus a suggested next-action string such as `propose
+sprintctl item add in repo kctl`. This command never calls sprintctl and a
+record is never accepted state: only a human or a separately authorized
+agent running an explicit `sprintctl item add ...` (or similar) themselves
+turns a proposal into a real backlog item. See
+docs/protocols/knowledge-proposal-v1.md for the contract and
+docs/examples/knowledge-proposal-consumer.md for a worked example.
 
 ## Requirements
 
@@ -351,6 +370,8 @@ kctl/
   extract.py  - event scanning, stream classification, scoped watermarks, preflight adapter
   review.py   - status transitions and review validation
   publish.py  - durable candidate -> entry promotion and supersession
+  artifact.py - read-only knowledge-artifact/v1 export of published entries
+  proposal.py - read-only knowledge-proposal/v1 export of approved-but-unpublished candidates
   cli.py      - Click entry point plus human and JSON artifact surfaces
 tests/
   conftest.py
@@ -358,6 +379,10 @@ tests/
   test_preflight.py
   test_review.py
   test_publish_render_status.py
+  test_knowledge_artifact_export.py
+  test_knowledge_artifact_contract.py
+  test_knowledge_proposal_export.py
+  test_knowledge_proposal_contract.py
 ```
 
 kctl owns its own SQLite database and never writes to sprintctl's. Its local

@@ -32,3 +32,10 @@ def test_protocol_document_keeps_artifact_export_read_only():
 
     assert "knowledge-artifact/v1 exporter writes a complete NDJSON projection" in protocol
     assert "It is read-only: it does not\nadvance a watermark, transition a candidate" in protocol
+
+
+def test_protocol_document_keeps_proposal_export_read_only_and_non_authoritative():
+    protocol = (ROOT / "docs/protocols/knowledge-lifecycle.md").read_text(encoding="utf-8")
+
+    assert "knowledge-proposal/v1 exporter is a second, separate read-only projection" in protocol
+    assert "neither is a\nsprintctl call, and neither marks the candidate as acted upon" in protocol

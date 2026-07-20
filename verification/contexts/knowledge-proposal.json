@@ -1,0 +1,69 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.proposal",
+  "owner_repo": "kctl",
+  "subject": "backlog-proposal-artifact",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-proposal",
+    "revision": "sha256:02b07acd85f86a6f53c978c5d93b28009f6f664399b429d2a6e00762685a87bd"
+  },
+  "source_of_truth": "sqlite-knowledge-candidate",
+  "depth": 0,
+  "backends": ["sqlite", "ndjson"],
+  "actors": ["reviewer", "proposal-exporter", "backlog-consumer"],
+  "initial_state": ["an approved kctl candidate exists", "the artifact destination may be absent"],
+  "operations": [
+    {
+      "name": "export-approved-proposal-snapshot",
+      "actors": ["proposal-exporter"],
+      "synchronization": "single-writer-atomic-replace"
+    },
+    {
+      "name": "read-proposal-snapshot",
+      "actors": ["backlog-consumer"],
+      "synchronization": "read-only"
+    }
+  ],
+  "consistency": {
+    "target": "projection-contract",
+    "object": "knowledge-proposal-v1"
+  },
+  "assumptions": {
+    "isolation": "single-writer-sqlite",
+    "clock": "exporter-supplied-UTC-timestamp",
+    "fairness": "not-applicable"
+  },
+  "bounds": {
+    "records": 1000,
+    "streams": 2,
+    "operation_sequences": 1
+  },
+  "invariants": [
+    "one-record-per-approved-candidate-per-snapshot",
+    "published-candidates-never-appear-in-this-artifact",
+    "candidate-and-rejected-candidates-never-appear-in-this-artifact",
+    "artifact-identity-is-repo-id-plus-candidate-id",
+    "interrupted-export-keeps-a-complete-snapshot",
+    "proposal-never-implies-a-sprintctl-item-was-created"
+  ],
+  "faults": [
+    "interrupted-before-atomic-replace",
+    "malformed-record-observed-by-reader",
+    "artifact-root-unavailable"
+  ],
+  "oracles": [
+    "json-schema",
+    "content-digest",
+    "approved-candidate-id-set"
+  ],
+  "implementation_anchors": [
+    "kctl/db.py:list_candidates",
+    "kctl/proposal.py:build_record",
+    "kctl/proposal.py:export_snapshot",
+    "kctl/cli.py:export_proposal_cmd"
+  ],
+  "expansions": [
+    "exporter-unit-test",
+    "backlog-consumer-contract-test"
+  ]
+}

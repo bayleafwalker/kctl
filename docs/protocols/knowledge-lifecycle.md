@@ -44,6 +44,14 @@ advance a watermark, transition a candidate, or repair an incomplete
 publication. A missing or malformed artifact is a reader-side degradation,
 not evidence that kctl state changed.
 
+The knowledge-proposal/v1 exporter is a second, separate read-only projection
+scoped to `approved` candidates that have not yet been published. It is not a
+review queue and does not change candidate status. Its records add a
+suggested owner repository and a suggested next-action string; neither is a
+sprintctl call, and neither marks the candidate as acted upon. A candidate
+leaves this projection only when kctl's own review/publish commands change
+its status, never as a side effect of exporting or reading the artifact.
+
 ## Safety properties
 
 - One source event produces at most one stored candidate.

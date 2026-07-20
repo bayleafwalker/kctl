@@ -5,7 +5,7 @@
   "subject": "knowledge-candidate-and-entry",
   "contract_ref": {
     "doc_id": "kctl.knowledge-lifecycle",
-    "revision": "sha256:56b55490d0371a4ef6253276abf0c596954b64c79f158024878459042b32f0a8"
+    "revision": "sha256:cb386b0a9c165ed6c9af28366ddd57d5f247e748dce428dee4b6c564e229cafd"
   },
   "source_of_truth": "sqlite-knowledge-store",
   "depth": 1,
@@ -17,7 +17,8 @@
     { "name": "approve-or-reject", "actors": ["reviewer"], "synchronization": "sequential-model-step" },
     { "name": "publish", "actors": ["publisher"], "synchronization": "fault-hook-between-commits" },
     { "name": "render", "actors": ["publisher"], "synchronization": "after-state-transition" },
-    { "name": "export-published-artifact", "actors": ["publisher"], "synchronization": "single-writer-atomic-replace" }
+    { "name": "export-published-artifact", "actors": ["publisher"], "synchronization": "single-writer-atomic-replace" },
+    { "name": "export-approved-proposal", "actors": ["publisher"], "synchronization": "single-writer-atomic-replace" }
   ],
   "consistency": { "target": "application-invariant", "object": "knowledge-lifecycle" },
   "assumptions": { "isolation": "single-writer-sqlite", "clock": "process-supplied-timestamps", "fairness": "not-applicable" },
@@ -29,15 +30,18 @@
     "candidate-transition-graph-holds",
     "only-approved-candidates-publish",
     "render-is-a-projection-of-published-state",
-    "knowledge-artifact-is-a-projection-of-published-state"
+    "knowledge-artifact-is-a-projection-of-published-state",
+    "knowledge-proposal-is-a-projection-of-approved-unpublished-state",
+    "knowledge-proposal-never-mutates-sprintctl-or-candidate-status"
   ],
   "faults": [
     "crash-after-candidate-commit-before-watermark",
     "crash-after-entry-insert-before-candidate-transition",
     "crash-after-supersession-before-candidate-transition",
-    "interrupted-before-artifact-atomic-replace"
+    "interrupted-before-artifact-atomic-replace",
+    "interrupted-before-proposal-atomic-replace"
   ],
-  "oracles": ["reference-state-machine", "source-event-id-set", "sqlite-invariant-query", "rendered-entry-id-set", "artifact-entry-id-set"],
-  "implementation_anchors": ["kctl/extract.py:extract_candidates", "kctl/source.py:RemoteSprintctlSource", "kctl/db.py:transition_candidate", "kctl/publish.py:publish_candidate", "kctl/artifact.py:export_snapshot"],
-  "expansions": ["semantic-doc", "stateful-test", "fault-scenario", "artifact-contract"]
+  "oracles": ["reference-state-machine", "source-event-id-set", "sqlite-invariant-query", "rendered-entry-id-set", "artifact-entry-id-set", "approved-candidate-id-set"],
+  "implementation_anchors": ["kctl/extract.py:extract_candidates", "kctl/source.py:RemoteSprintctlSource", "kctl/db.py:transition_candidate", "kctl/publish.py:publish_candidate", "kctl/artifact.py:export_snapshot", "kctl/proposal.py:export_snapshot"],
+  "expansions": ["semantic-doc", "stateful-test", "fault-scenario", "artifact-contract", "proposal-contract"]
 }

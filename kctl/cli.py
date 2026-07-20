@@ -9,6 +9,7 @@ import click
 from . import artifact as _artifact
 from . import db as _db
 from . import extract as _extract
+from . import proposal as _proposal
 from . import publish as _publish
 from . import review as _review
 from . import source as _source
@@ -585,6 +586,59 @@ def export_cmd(obj, artifacts_root, repo_id) -> None:
         raise click.ClickException(str(exc)) from exc
 
     click.echo(f"Wrote {count} published entry/entries to {output_path}")
+
+
+# ---------------------------------------------------------------------------
+# export-proposal
+# ---------------------------------------------------------------------------
+
+@cli.command("export-proposal")
+@click.option(
+    "--artifacts-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=lambda: os.environ.get("KCTL_ARTIFACTS_ROOT"),
+    help="Artifact root (default: KCTL_ARTIFACTS_ROOT)",
+)
+@click.option(
+    "--repo-id",
+    default=lambda: os.environ.get("KCTL_PROJECT"),
+    help="Repository scope this kctl store belongs to (default: KCTL_PROJECT)",
+)
+@click.option(
+    "--suggested-owner-repo",
+    default=None,
+    help="Repo to suggest as the sprintctl item owner for every proposal (default: --repo-id)",
+)
+@click.pass_obj
+def export_proposal_cmd(obj, artifacts_root, repo_id, suggested_owner_repo) -> None:
+    """Write a read-only proposal snapshot of approved-but-unpublished knowledge.
+
+    This is a decision-support artifact only: it never creates or mutates a
+    sprintctl item and never treats a proposal as accepted state. A human or
+    a separately authorized agent must run an explicit sprintctl command to
+    act on any proposal it contains.
+    """
+    if artifacts_root is None:
+        raise click.UsageError("--artifacts-root or KCTL_ARTIFACTS_ROOT is required")
+    if not repo_id:
+        raise click.UsageError("--repo-id or KCTL_PROJECT is required")
+    owner = suggested_owner_repo or repo_id
+    try:
+        output_path, count = _proposal.export_snapshot(
+            obj["conn"],
+            artifacts_root=artifacts_root,
+            repo_id=repo_id,
+            suggested_owner_repo=owner,
+            rendered_at=_now(),
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(f"Wrote {count} approved knowledge proposal(s) to {output_path}")
+    click.echo(
+        "This is a proposal only — run the suggested sprintctl command yourself "
+        "to act on it. kctl does not create or modify sprintctl items."
+    )
 
 
 # ---------------------------------------------------------------------------

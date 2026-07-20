@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/bayleafwalker/kctl/schemas/knowledge-proposal-v1.schema.json",
+  "title": "knowledge-proposal/v1",
+  "description": "One approved-but-not-yet-published kctl candidate, emitted as one line of a versioned NDJSON snapshot. A proposal only; never accepted state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "repo_id",
+    "candidate_id",
+    "stream",
+    "status",
+    "summary",
+    "detail",
+    "content_digest",
+    "tags",
+    "provenance",
+    "suggested_owner_repo",
+    "suggested_next_action",
+    "extracted_at",
+    "rendered_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "knowledge-proposal/v1"
+    },
+    "repo_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "candidate_id": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "stream": {
+      "enum": ["durable", "coordination"]
+    },
+    "status": {
+      "const": "approved"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "detail": {
+      "type": ["string", "null"]
+    },
+    "content_digest": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "tags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "event_ref",
+        "sprint_id",
+        "item_id",
+        "track",
+        "reviewed_at",
+        "reviewed_by"
+      ],
+      "properties": {
+        "event_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_ref": {
+          "type": "string",
+          "pattern": "^sprintctl:event:[1-9][0-9]*$"
+        },
+        "sprint_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "item_id": {
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "track": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "reviewed_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+        },
+        "reviewed_by": {
+          "type": ["string", "null"],
+          "minLength": 1
+        }
+      }
+    },
+    "suggested_owner_repo": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "suggested_next_action": {
+      "type": "string",
+      "minLength": 1
+    },
+    "extracted_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
+    "rendered_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    }
+  }
+}
