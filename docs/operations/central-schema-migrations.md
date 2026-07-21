@@ -84,6 +84,25 @@ reconciliation. Treat snapshots as recovery material because they contain
 candidate and local published content needed to verify digests; access-control
 and retention policy are deployment responsibilities.
 
+Retry validation compares every artifact-derived column persisted for the
+candidate, review, and publication reference, including source provenance,
+reviewer evidence, document identity, tags, and timestamps. Only
+database-generated bookkeeping such as `imported_at` and the review sequence
+is outside that equality check.
+
+## Verification dependency
+
+The PostgreSQL migration and retry gates require the `remote` extra and local
+PostgreSQL server binaries. Run the repository suite with:
+
+```bash
+uv run --all-extras pytest
+```
+
+The current GitHub Actions workflow installs only the `dev` extra, so it skips
+these critical tests; changing `.github/workflows/ci.yml` is outside the
+manifest-allowed roots for this item and remains follow-up CI debt.
+
 ## Recovery
 
 Never modify a released migration or delete its ledger row. On failure, keep

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import getpass
 import json
 import shutil
@@ -359,6 +360,61 @@ def test_local_import_is_idempotent_and_preserves_only_content_references(
     assert reference["git_revision"] == GIT_REVISION
     assert reference["content_digest"] == value["publications"][0]["content_digest"]
     assert {"title", "body", "document_body"}.isdisjoint(columns)
+
+
+def test_import_retry_rejects_each_changed_persisted_evidence_field(
+    postgres_dsn: str, tmp_path: Path
+) -> None:
+    schema = _schema("knowledge_import_conflict")
+    _migrate_current(postgres_dsn, schema)
+    original = _artifact(tmp_path, repo_id="kctl-conflict")
+
+    def changed(*fields: str) -> dict:
+        value = copy.deepcopy(original)
+        if "source.sprint_id" in fields:
+            value["candidates"][0]["source"]["sprint_id"] += 1
+        if "review.reviewed_by" in fields:
+            value["candidates"][0]["review"]["reviewed_by"] = "human:other"
+        if "publication.document_id" in fields:
+            value["publications"][0]["document_id"] = "kctl-conflict:other-document"
+        value["artifact_digest"] = transfer._artifact_digest(value)
+        transfer.validate_artifact(value)
+        return value
+
+    variants = (
+        changed("source.sprint_id"),
+        changed("review.reviewed_by"),
+        changed("publication.document_id"),
+        changed(
+            "source.sprint_id",
+            "review.reviewed_by",
+            "publication.document_id",
+        ),
+    )
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        transfer.import_artifact(conn, schema=schema, value=original)
+        for variant in variants:
+            with pytest.raises(transfer.TransferConflictError, match="conflicts"):
+                transfer.import_artifact(conn, schema=schema, value=variant)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT candidate.source_sprint_id, review.reviewed_by,
+                       publication.document_id
+                FROM "{schema}".knowledge_candidate AS candidate
+                JOIN "{schema}".knowledge_review AS review
+                  ON review.candidate_id = candidate.candidate_id
+                JOIN "{schema}".knowledge_publication_reference AS publication
+                  ON publication.candidate_id = candidate.candidate_id
+                """
+            )
+            retained = cur.fetchone()
+
+    assert (
+        retained["source_sprint_id"] == original["candidates"][0]["source"]["sprint_id"]
+    )
+    assert retained["reviewed_by"] == original["candidates"][0]["review"]["reviewed_by"]
+    assert retained["document_id"] == original["publications"][0]["document_id"]
 
 
 def test_concurrent_local_import_retries_apply_once(

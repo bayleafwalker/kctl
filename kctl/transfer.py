@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import tempfile
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 from uuid import UUID, uuid5
@@ -131,6 +132,20 @@ def _content_path(value: Any) -> str:
 
 def _stable_uuid(kind: str, repo_id: str, local_id: int) -> str:
     return str(uuid5(TRANSFER_NAMESPACE, f"{kind}:{repo_id}:{local_id}"))
+
+
+def _database_timestamp(value: str | None) -> datetime | None:
+    if value is None:
+        return None
+    return datetime.fromisoformat(value.removesuffix("Z") + "+00:00")
+
+
+def _row_mapping(row: Any, columns: tuple[str, ...]) -> dict[str, Any]:
+    if row is None:
+        raise TransferConflictError("central row disappeared during import")
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(zip(columns, row, strict=True))
 
 
 def _candidate_record(
@@ -544,22 +559,66 @@ def import_artifact(conn: Any, *, schema: str, value: dict[str, Any]) -> dict[st
                 inserted_candidates += cur.rowcount
                 cur.execute(
                     f"""
-                    SELECT candidate_id::text, source_event_id, status,
-                           content_digest, basis_git_revision
+                    SELECT candidate_id::text AS candidate_id,
+                           repo_id, local_candidate_id, source_event_id,
+                           source_sprint_id, source_item_id, source_track,
+                           source_actor, source_type, source_created_at,
+                           source_payload, event_type, candidate_kind, summary,
+                           detail, tags, confidence, status, content_digest,
+                           basis_git_revision, extracted_at
                     FROM {schema_ident}.knowledge_candidate
                     WHERE repo_id = %s AND local_candidate_id = %s
                     """,
                     (repo_id, local_id),
                 )
                 row = cur.fetchone()
-            actual = tuple(row.values()) if isinstance(row, dict) else tuple(row)
-            expected = (
-                stable_id,
-                source["event_id"],
-                candidate["status"],
-                candidate["content_digest"],
-                candidate["basis_git_revision"],
+            candidate_columns = (
+                "candidate_id",
+                "repo_id",
+                "local_candidate_id",
+                "source_event_id",
+                "source_sprint_id",
+                "source_item_id",
+                "source_track",
+                "source_actor",
+                "source_type",
+                "source_created_at",
+                "source_payload",
+                "event_type",
+                "candidate_kind",
+                "summary",
+                "detail",
+                "tags",
+                "confidence",
+                "status",
+                "content_digest",
+                "basis_git_revision",
+                "extracted_at",
             )
+            actual = _row_mapping(row, candidate_columns)
+            expected = {
+                "candidate_id": stable_id,
+                "repo_id": repo_id,
+                "local_candidate_id": local_id,
+                "source_event_id": source["event_id"],
+                "source_sprint_id": source["sprint_id"],
+                "source_item_id": source.get("item_id"),
+                "source_track": source.get("track"),
+                "source_actor": source.get("actor"),
+                "source_type": source.get("type"),
+                "source_created_at": _database_timestamp(source.get("created_at")),
+                "source_payload": source.get("payload"),
+                "event_type": candidate["event_type"],
+                "candidate_kind": candidate["candidate_kind"],
+                "summary": candidate["summary"],
+                "detail": candidate.get("detail"),
+                "tags": candidate["tags"],
+                "confidence": candidate.get("confidence"),
+                "status": candidate["status"],
+                "content_digest": candidate["content_digest"],
+                "basis_git_revision": candidate["basis_git_revision"],
+                "extracted_at": _database_timestamp(candidate["extracted_at"]),
+            }
             if actual != expected:
                 raise TransferConflictError(
                     f"candidate #{local_id} conflicts with an existing central record"
@@ -589,21 +648,34 @@ def import_artifact(conn: Any, *, schema: str, value: dict[str, Any]) -> dict[st
                     inserted_reviews += cur.rowcount
                     cur.execute(
                         f"""
-                        SELECT decision, content_digest, basis_git_revision
+                        SELECT candidate_id::text AS candidate_id, decision,
+                               reviewed_at, reviewed_by, review_notes,
+                               content_digest, basis_git_revision
                         FROM {schema_ident}.knowledge_review
                         WHERE candidate_id = %s
                         """,
                         (stable_id,),
                     )
                     row = cur.fetchone()
-                actual_review = (
-                    tuple(row.values()) if isinstance(row, dict) else tuple(row)
+                review_columns = (
+                    "candidate_id",
+                    "decision",
+                    "reviewed_at",
+                    "reviewed_by",
+                    "review_notes",
+                    "content_digest",
+                    "basis_git_revision",
                 )
-                expected_review = (
-                    review["decision"],
-                    candidate["content_digest"],
-                    candidate["basis_git_revision"],
-                )
+                actual_review = _row_mapping(row, review_columns)
+                expected_review = {
+                    "candidate_id": stable_id,
+                    "decision": review["decision"],
+                    "reviewed_at": _database_timestamp(review["reviewed_at"]),
+                    "reviewed_by": review["reviewed_by"],
+                    "review_notes": review.get("review_notes"),
+                    "content_digest": candidate["content_digest"],
+                    "basis_git_revision": candidate["basis_git_revision"],
+                }
                 if actual_review != expected_review:
                     raise TransferConflictError(
                         f"candidate #{local_id} review conflicts with central state"
@@ -644,23 +716,48 @@ def import_artifact(conn: Any, *, schema: str, value: dict[str, Any]) -> dict[st
                 inserted_publications += cur.rowcount
                 cur.execute(
                     f"""
-                    SELECT publication_id::text, candidate_id::text, git_revision,
-                           content_digest, content_path, content_anchor
+                    SELECT publication_id::text AS publication_id, repo_id,
+                           local_entry_id, candidate_id::text AS candidate_id,
+                           document_id, content_path, content_anchor,
+                           git_revision, content_digest, category, source_kind,
+                           tags, published_at
                     FROM {schema_ident}.knowledge_publication_reference
                     WHERE repo_id = %s AND local_entry_id = %s
                     """,
                     (repo_id, local_id),
                 )
                 row = cur.fetchone()
-            actual = tuple(row.values()) if isinstance(row, dict) else tuple(row)
-            expected = (
-                stable_id,
-                candidate_id,
-                publication["git_revision"],
-                publication["content_digest"],
-                publication["content_path"],
-                publication["content_anchor"],
+            publication_columns = (
+                "publication_id",
+                "repo_id",
+                "local_entry_id",
+                "candidate_id",
+                "document_id",
+                "content_path",
+                "content_anchor",
+                "git_revision",
+                "content_digest",
+                "category",
+                "source_kind",
+                "tags",
+                "published_at",
             )
+            actual = _row_mapping(row, publication_columns)
+            expected = {
+                "publication_id": stable_id,
+                "repo_id": repo_id,
+                "local_entry_id": local_id,
+                "candidate_id": candidate_id,
+                "document_id": publication["document_id"],
+                "content_path": publication["content_path"],
+                "content_anchor": publication["content_anchor"],
+                "git_revision": publication["git_revision"],
+                "content_digest": publication["content_digest"],
+                "category": publication["category"],
+                "source_kind": publication["source_kind"],
+                "tags": publication["tags"],
+                "published_at": _database_timestamp(publication["published_at"]),
+            }
             if actual != expected:
                 raise TransferConflictError(
                     f"publication #{local_id} conflicts with an existing central record"
