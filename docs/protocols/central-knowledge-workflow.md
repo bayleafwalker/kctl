@@ -82,6 +82,43 @@ unknown response, retry the exact artifact. A changed artifact under an
 existing local identity fails as a conflict rather than updating central
 history.
 
+## Served application boundary
+
+The Click-independent central application core exposes single-candidate
+extraction intake, bounded candidate and publication-reference reads, review
+decisions, publication-reference recording, and supersession. Each operation
+first requires a compatible runtime role and uses DML only. The Vuoro adapter
+owns domain-qualified `knowledge.*` operation names and JSON Schemas, while the
+generic service shell continues to own transport identity, authority, and
+envelope enforcement.
+
+Candidate intake derives the same stable UUID used by local transfer from the
+repository and local candidate ID. The repository/source-event and
+repository/local-candidate keys must identify the same immutable evidence.
+An exact retry is a no-op; changed content, provenance, digest, or Git basis
+under either identity is a conflict.
+
+Approve and reject record the resolved Vuoro actor, candidate digest, and the
+candidate's Git basis in `knowledge_review`. The invocation basis must match
+that candidate basis. An exact decision retry returns the existing review,
+including after a later publication transition; a changed or opposite retry
+is rejected. These operations decide candidate review state only. They cannot
+ratify an authored document or edit a document status.
+
+A publication-reference operation accepts no title or body. It records only a
+repository-relative path, anchor, full Git revision, digest, and classification,
+then marks an approved candidate published in the same PostgreSQL transaction.
+Optional initial supersession and the explicit supersession operation require
+same-repository references and reject self-links, changed successors, and
+cycles. Exact retries retain stable publication and evidence references.
+
+List operations enforce a maximum of 100 rows in the application core as well
+as in catalog schemas. Recreating the application or service does not alter
+retry identity because candidate, review, and publication rows are the durable
+evidence. This central atomicity does not change or silently repair the legacy
+SQLite publication path, whose separate-commit recovery limitation remains as
+documented in `knowledge-lifecycle.md`.
+
 ## Environment isolation and rollback
 
 Each deployment schema records `environment_name` and `environment_class`.

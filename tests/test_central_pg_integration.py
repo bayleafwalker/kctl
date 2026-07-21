@@ -19,6 +19,13 @@ from kctl import db
 from kctl import publish
 from kctl import review
 from kctl import transfer
+from kctl.application import (
+    CentralKnowledgeApplication,
+    KnowledgeConflictError,
+    MutationEvidence,
+    StaleBasisError,
+)
+from kctl.proposal import proposal_digest
 from kctl.central_schema import (
     EnvironmentBindingError,
     MigrationDriftError,
@@ -124,6 +131,89 @@ def _migrate_current(dsn: str, schema: str, environment: str = "vuoro-dev") -> N
             environment_class="development",
         )
     assert result.installed_version == 2
+
+
+def _served_application(dsn: str, schema: str) -> CentralKnowledgeApplication:
+    return CentralKnowledgeApplication(
+        schema=schema,
+        connection_factory=lambda: psycopg.connect(
+            f"{dsn} user={RUNTIME_ROLE}", autocommit=True, row_factory=dict_row
+        ),
+        expected_environment_name="vuoro-dev",
+        expected_environment_class="development",
+    )
+
+
+def _evidence(
+    basis: str = GIT_REVISION,
+    *,
+    actor: str = "human:reviewer",
+    request_id: str = "request-1",
+    key: str = "key-1",
+) -> MutationEvidence:
+    return MutationEvidence(
+        actor=actor,
+        environment="vuoro-dev",
+        request_id=request_id,
+        catalog_revision="catalog-test",
+        idempotency_key=key,
+        basis_revision=basis,
+    )
+
+
+def _served_candidate(
+    local_id: int,
+    *,
+    repo_id: str = "kctl-served",
+    summary: str | None = None,
+) -> dict[str, Any]:
+    summary = summary or f"Served candidate {local_id}"
+    detail = f"Candidate detail {local_id}"
+    return {
+        "repo_id": repo_id,
+        "local_candidate_id": local_id,
+        "source_event_id": 10_000 + local_id,
+        "source_sprint_id": 381,
+        "source_item_id": 1200,
+        "source_track": "served-substrate",
+        "source_actor": "codex:extractor",
+        "source_type": "actor",
+        "source_created_at": f"2026-07-21T12:00:{local_id:02d}Z",
+        "source_payload": {"summary": summary, "tags": ["vuoro"]},
+        "event_type": "decision",
+        "candidate_kind": "durable",
+        "summary": summary,
+        "detail": detail,
+        "tags": ["vuoro"],
+        "confidence": "high",
+        "content_digest": proposal_digest(summary, detail),
+        "basis_git_revision": GIT_REVISION,
+        "extracted_at": f"2026-07-21T12:01:{local_id:02d}Z",
+    }
+
+
+def _served_publication(
+    local_id: int,
+    candidate_id: str,
+    *,
+    repo_id: str = "kctl-served",
+    supersedes: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "repo_id": repo_id,
+        "local_entry_id": local_id,
+        "candidate_id": candidate_id,
+        "document_id": f"{repo_id}:knowledge-base",
+        "content_path": "docs/knowledge/knowledge-base.md",
+        "content_anchor": f"entry-{local_id}",
+        "git_revision": GIT_REVISION,
+        "content_digest": "sha256:" + f"{local_id:x}"[-1] * 64,
+        "category": "decision",
+        "source_kind": "durable",
+        "tags": ["vuoro"],
+        "published_at": f"2026-07-21T12:10:{local_id:02d}Z",
+        "supersedes_publication_id": supersedes,
+    }
 
 
 def _artifact(
@@ -597,3 +687,192 @@ def test_vuoro_dev_schema_is_isolated_from_another_environment(
                 f'SELECT count(*) AS count FROM "{other_schema}".knowledge_candidate'
             )
             assert cur.fetchone()["count"] == 0
+
+
+def test_served_candidate_intake_review_retries_and_stale_basis_survive_restart(
+    postgres_dsn: str,
+) -> None:
+    schema = _schema("knowledge_served_review")
+    _migrate_current(postgres_dsn, schema)
+    application = _served_application(postgres_dsn, schema)
+    candidate = _served_candidate(1)
+
+    first = application.intake_candidate(candidate, evidence=_evidence(key="intake-1"))
+    replay = application.intake_candidate(
+        candidate,
+        evidence=_evidence(request_id="intake-retry", key="intake-1"),
+    )
+    restarted = _served_application(postgres_dsn, schema)
+    restart_replay = restarted.intake_candidate(
+        candidate,
+        evidence=_evidence(request_id="after-restart", key="intake-1"),
+    )
+
+    assert first["replayed"] is False
+    assert replay["replayed"] is True
+    assert restart_replay["replayed"] is True
+    assert replay["candidate"]["candidate_id"] == first["candidate"]["candidate_id"]
+    assert restart_replay["evidence_ref"] == first["evidence_ref"]
+
+    changed = copy.deepcopy(candidate)
+    changed["summary"] = "changed on retry"
+    changed["content_digest"] = proposal_digest(changed["summary"], changed["detail"])
+    with pytest.raises(KnowledgeConflictError, match="immutable evidence"):
+        application.intake_candidate(changed, evidence=_evidence(key="intake-1"))
+
+    duplicate_source = _served_candidate(2)
+    duplicate_source["source_event_id"] = candidate["source_event_id"]
+    with pytest.raises(KnowledgeConflictError, match="identity|identities"):
+        application.intake_candidate(
+            duplicate_source, evidence=_evidence(key="intake-2")
+        )
+
+    candidate_id = first["candidate"]["candidate_id"]
+    with pytest.raises(StaleBasisError, match="does not match"):
+        application.approve_candidate(
+            candidate_id=candidate_id,
+            notes="reviewed",
+            evidence=_evidence("a" * 40, key="approve-stale"),
+        )
+    approved = application.approve_candidate(
+        candidate_id=candidate_id,
+        notes="reviewed",
+        evidence=_evidence(key="approve-1"),
+    )
+    approved_replay = restarted.approve_candidate(
+        candidate_id=candidate_id,
+        notes="reviewed",
+        evidence=_evidence(request_id="approve-retry", key="approve-1"),
+    )
+    assert approved["candidate"]["status"] == "approved"
+    assert approved["review"]["reviewed_by"] == "human:reviewer"
+    assert approved["review"]["content_digest"] == candidate["content_digest"]
+    assert approved_replay["replayed"] is True
+    assert approved_replay["evidence_ref"] == approved["evidence_ref"]
+    with pytest.raises(KnowledgeConflictError, match="review evidence"):
+        restarted.approve_candidate(
+            candidate_id=candidate_id,
+            notes="changed review",
+            evidence=_evidence(key="approve-1"),
+        )
+
+    rejected_source = _served_candidate(3)
+    rejected = application.intake_candidate(
+        rejected_source, evidence=_evidence(key="intake-3")
+    )
+    rejected_result = application.reject_candidate(
+        candidate_id=rejected["candidate"]["candidate_id"],
+        reason="not durable",
+        evidence=_evidence(key="reject-3"),
+    )
+    assert rejected_result["candidate"]["status"] == "rejected"
+    with pytest.raises(KnowledgeConflictError, match="review evidence"):
+        application.approve_candidate(
+            candidate_id=rejected["candidate"]["candidate_id"],
+            notes=None,
+            evidence=_evidence(key="approve-3"),
+        )
+
+    bounded = application.list_candidates(repo_id="kctl-served", limit=1)
+    shown = restarted.show_candidate(candidate_id=candidate_id)
+    assert bounded["count"] == 1
+    assert len(bounded["candidates"]) == 1
+    assert shown["candidate"]["candidate_id"] == candidate_id
+    assert shown["review"]["decision"] == "approved"
+
+
+def test_served_publication_references_supersession_and_changed_retries(
+    postgres_dsn: str,
+) -> None:
+    schema = _schema("knowledge_served_publication")
+    _migrate_current(postgres_dsn, schema)
+    application = _served_application(postgres_dsn, schema)
+    publications: list[dict[str, Any]] = []
+
+    for local_id in (1, 2, 3):
+        intake = application.intake_candidate(
+            _served_candidate(local_id),
+            evidence=_evidence(key=f"intake-{local_id}"),
+        )
+        candidate_id = intake["candidate"]["candidate_id"]
+        application.approve_candidate(
+            candidate_id=candidate_id,
+            evidence=_evidence(key=f"approve-{local_id}"),
+        )
+        supersedes = (
+            publications[0]["publication"]["publication_id"] if local_id == 2 else None
+        )
+        publication = _served_publication(local_id, candidate_id, supersedes=supersedes)
+        publications.append(
+            application.record_publication_reference(
+                publication,
+                evidence=_evidence(key=f"publish-{local_id}"),
+            )
+        )
+
+    first, second, third = publications
+    assert first["candidate"]["status"] == "published"
+    assert second["publication"]["git_revision"] == GIT_REVISION
+    assert set(second["publication"]).isdisjoint({"title", "body", "document_body"})
+
+    second_input = _served_publication(
+        2,
+        second["candidate"]["candidate_id"],
+        supersedes=first["publication"]["publication_id"],
+    )
+    restarted = _served_application(postgres_dsn, schema)
+    second_replay = restarted.record_publication_reference(
+        second_input,
+        evidence=_evidence(request_id="publish-retry", key="publish-2"),
+    )
+    assert second_replay["replayed"] is True
+    assert second_replay["evidence_ref"] == second["evidence_ref"]
+
+    changed = copy.deepcopy(second_input)
+    changed["content_digest"] = "sha256:" + "f" * 64
+    with pytest.raises(KnowledgeConflictError, match="immutable evidence"):
+        restarted.record_publication_reference(
+            changed, evidence=_evidence(key="publish-2")
+        )
+    changed_supersession = copy.deepcopy(second_input)
+    changed_supersession["supersedes_publication_id"] = None
+    with pytest.raises(KnowledgeConflictError, match="omitted"):
+        restarted.record_publication_reference(
+            changed_supersession, evidence=_evidence(key="publish-2")
+        )
+    with pytest.raises(StaleBasisError, match="does not match"):
+        restarted.record_publication_reference(
+            _served_publication(4, second["candidate"]["candidate_id"]),
+            evidence=_evidence("a" * 40, key="publish-stale"),
+        )
+
+    linked = restarted.supersede_publication(
+        predecessor_id=second["publication"]["publication_id"],
+        successor_id=third["publication"]["publication_id"],
+        evidence=_evidence(key="supersede-2-3"),
+    )
+    linked_replay = application.supersede_publication(
+        predecessor_id=second["publication"]["publication_id"],
+        successor_id=third["publication"]["publication_id"],
+        evidence=_evidence(request_id="supersede-retry", key="supersede-2-3"),
+    )
+    assert (
+        linked["predecessor"]["superseded_by"] == third["publication"]["publication_id"]
+    )
+    assert linked_replay["replayed"] is True
+    with pytest.raises(KnowledgeConflictError, match="different successor"):
+        application.supersede_publication(
+            predecessor_id=first["publication"]["publication_id"],
+            successor_id=third["publication"]["publication_id"],
+            evidence=_evidence(key="supersede-conflict"),
+        )
+
+    bounded = application.list_publications(repo_id="kctl-served", limit=2)
+    shown = restarted.show_publication(
+        publication_id=third["publication"]["publication_id"]
+    )
+    assert bounded["count"] == 2
+    assert len(bounded["publications"]) == 2
+    assert (
+        shown["publication"]["publication_id"] == third["publication"]["publication_id"]
+    )

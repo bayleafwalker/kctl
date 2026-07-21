@@ -5,7 +5,7 @@
   "subject": "central-knowledge-review-and-publication-reference",
   "contract_ref": {
     "doc_id": "kctl.central-knowledge-workflow",
-    "revision": "sha256:16d6737109b907240659e8fb4bf5c391e90bd88a3696c9d5bb723d7e9c8f5236"
+    "revision": "sha256:b5e18700b721eff3dad56b1e0fd5d33931389acba9a5dfd9da676f99170b7114"
   },
   "source_of_truth": "postgresql-knowledge-workflow-plus-git-published-content",
   "depth": 2,
@@ -15,7 +15,9 @@
     "deployment-migrator-a",
     "deployment-migrator-b",
     "runtime-importer",
-    "runtime-reader"
+    "runtime-reader",
+    "vuoro-knowledge-adapter",
+    "generic-vuoro-client"
   ],
   "initial_state": [
     "a local SQLite candidate and publication may exist",
@@ -42,6 +44,31 @@
       "name": "import-local",
       "actors": ["runtime-importer"],
       "synchronization": "per-schema-and-repository-postgresql-advisory-transaction-lock"
+    },
+    {
+      "name": "intake-candidate",
+      "actors": ["vuoro-knowledge-adapter"],
+      "synchronization": "per-schema-and-repository-postgresql-advisory-transaction-lock"
+    },
+    {
+      "name": "approve-or-reject",
+      "actors": ["vuoro-knowledge-adapter"],
+      "synchronization": "candidate-row-lock-plus-git-basis-check"
+    },
+    {
+      "name": "record-publication-reference",
+      "actors": ["vuoro-knowledge-adapter"],
+      "synchronization": "candidate-row-lock-plus-repository-advisory-transaction-lock"
+    },
+    {
+      "name": "supersede-publication",
+      "actors": ["vuoro-knowledge-adapter"],
+      "synchronization": "publication-row-lock-plus-cycle-check"
+    },
+    {
+      "name": "bounded-read",
+      "actors": ["runtime-reader", "generic-vuoro-client"],
+      "synchronization": "read-only-limit-100"
     }
   ],
   "consistency": {
@@ -57,7 +84,9 @@
     "candidates": 1000,
     "publications": 1000,
     "migration_jobs": 2,
-    "operation_sequences": 100
+    "operation_sequences": 100,
+    "served_read_limit": 100,
+    "service_restarts": 1
   },
   "invariants": [
     "packaged-migration-versions-are-contiguous-and-checksummed",
@@ -69,12 +98,21 @@
     "central-publication-reference-stores-no-title-or-body",
     "supersession-targets-exist-in-the-same-repository-and-are-acyclic",
     "repeating-an-identical-import-is-a-no-op",
+    "repeating-an-identical-served-mutation-is-a-no-op-with-stable-evidence",
+    "changed-served-retries-conflict-without-overwriting-evidence",
+    "review-and-publication-mutations-reject-stale-git-bases",
+    "served-publication-records-git-references-without-document-content",
+    "served-reads-return-at-most-100-records",
+    "service-restart-preserves-domain-idempotency",
     "environment-binding-prevents-vuoro-dev-from-accepting-another-environment-schema"
   ],
   "faults": [
     "concurrent-empty-schema-migration",
     "migration-checksum-drift",
     "connection-loss-after-import-commit-before-response",
+    "service-restart-after-served-mutation-commit",
+    "changed-retry-under-stable-candidate-or-publication-identity",
+    "stale-git-basis-on-review-or-publication",
     "tampered-content-with-recomputed-artifact-digest",
     "path-traversal-content-reference",
     "missing-or-cyclic-supersession-reference",
@@ -87,6 +125,9 @@
     "canonical-content-digest",
     "git-revision-pattern",
     "artifact-self-digest",
+    "vuoro-operation-catalog-json-schema",
+    "generic-client-invocation-result",
+    "stable-served-evidence-reference",
     "central-relation-column-set",
     "stable-local-identity-count"
   ],
@@ -95,12 +136,17 @@
     "kctl/central_schema.py:check_compatibility",
     "kctl/transfer.py:build_artifact",
     "kctl/transfer.py:validate_artifact",
-    "kctl/transfer.py:import_artifact"
+    "kctl/transfer.py:import_artifact",
+    "kctl/application.py:CentralKnowledgeApplication",
+    "kctl/vuoro.py:VuoroKnowledgeAdapter",
+    "kctl/vuoro.py:catalog_operation_specs"
   ],
   "expansions": [
     "transfer-artifact-unit-test",
     "hermetic-postgresql-migration-test",
     "runtime-role-privilege-test",
-    "environment-isolation-test"
+    "environment-isolation-test",
+    "served-application-retry-and-restart-test",
+    "real-vuoro-registry-and-generic-client-test"
   ]
 }
