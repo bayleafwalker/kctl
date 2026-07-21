@@ -23,9 +23,9 @@ from . import transfer
 from .central_migrations import MIGRATION_ASSETS
 
 
-CURRENT_SCHEMA_VERSION = 2
-MIN_RUNTIME_SCHEMA_VERSION = 2
-MAX_RUNTIME_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
+MIN_RUNTIME_SCHEMA_VERSION = 3
+MAX_RUNTIME_SCHEMA_VERSION = 3
 DOMAIN_API_VERSION = "knowledge/v1"
 MIGRATION_LOCK_NAMESPACE = "kctl-central-schema"
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
@@ -88,6 +88,7 @@ _COLUMN_SHAPE: dict[str, dict[str, tuple[str, str]]] = {
         "tags": ("jsonb", "NO"),
         "published_at": ("timestamptz", "NO"),
         "superseded_by": ("uuid", "YES"),
+        "inline_supersedes": ("uuid", "YES"),
         "imported_at": ("timestamptz", "NO"),
     },
     "schema_principal": {
@@ -167,6 +168,15 @@ _REQUIRED_STRUCTURAL_CONSTRAINTS = {
     ): (
         "f",
         ("repo_id", "superseded_by"),
+        "knowledge_publication_reference",
+        ("repo_id", "publication_id"),
+    ),
+    (
+        "knowledge_publication_reference",
+        "knowledge_publication_inline_supersession_fk",
+    ): (
+        "f",
+        ("repo_id", "inline_supersedes"),
         "knowledge_publication_reference",
         ("repo_id", "publication_id"),
     ),

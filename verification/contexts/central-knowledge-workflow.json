@@ -5,7 +5,7 @@
   "subject": "central-knowledge-review-and-publication-reference",
   "contract_ref": {
     "doc_id": "kctl.central-knowledge-workflow",
-    "revision": "sha256:b5e18700b721eff3dad56b1e0fd5d33931389acba9a5dfd9da676f99170b7114"
+    "revision": "sha256:8d6cdea6d01719b0f9c853ec6edb36ced34dc809358dc19fa1ae7a7bb5129429"
   },
   "source_of_truth": "postgresql-knowledge-workflow-plus-git-published-content",
   "depth": 2,
@@ -100,6 +100,8 @@
     "repeating-an-identical-import-is-a-no-op",
     "repeating-an-identical-served-mutation-is-a-no-op-with-stable-evidence",
     "changed-served-retries-conflict-without-overwriting-evidence",
+    "publication-creation-inline-supersession-evidence-is-immutable",
+    "exact-publication-retry-is-independent-of-later-explicit-incoming-edges",
     "review-and-publication-mutations-reject-stale-git-bases",
     "served-publication-records-git-references-without-document-content",
     "served-reads-return-at-most-100-records",
@@ -112,6 +114,8 @@
     "connection-loss-after-import-commit-before-response",
     "service-restart-after-served-mutation-commit",
     "changed-retry-under-stable-candidate-or-publication-identity",
+    "explicit-supersession-edge-added-before-exact-publication-retry",
+    "unrelated-explicit-incoming-edge-added-after-inline-publication",
     "stale-git-basis-on-review-or-publication",
     "tampered-content-with-recomputed-artifact-digest",
     "path-traversal-content-reference",
@@ -128,12 +132,14 @@
     "vuoro-operation-catalog-json-schema",
     "generic-client-invocation-result",
     "stable-served-evidence-reference",
+    "inline-supersedes-creation-evidence-column",
     "central-relation-column-set",
     "stable-local-identity-count"
   ],
   "implementation_anchors": [
     "kctl/central_schema.py:migrate",
     "kctl/central_schema.py:check_compatibility",
+    "kctl/central_migrations.py:MIGRATION_ASSETS",
     "kctl/transfer.py:build_artifact",
     "kctl/transfer.py:validate_artifact",
     "kctl/transfer.py:import_artifact",
@@ -147,6 +153,7 @@
     "runtime-role-privilege-test",
     "environment-isolation-test",
     "served-application-retry-and-restart-test",
-    "real-vuoro-registry-and-generic-client-test"
+    "real-vuoro-registry-and-generic-client-test",
+    "real-vuoro-postgresql-publication-restart-test"
   ]
 }

@@ -116,4 +116,16 @@ MIGRATION_ASSETS: tuple[tuple[str, str], ...] = (
         );
         """,
     ),
+    (
+        "publication_inline_supersession_evidence",
+        r"""
+        ALTER TABLE __SCHEMA__.knowledge_publication_reference
+            ADD COLUMN inline_supersedes uuid;
+
+        ALTER TABLE __SCHEMA__.knowledge_publication_reference
+            ADD CONSTRAINT knowledge_publication_inline_supersession_fk
+            FOREIGN KEY (repo_id, inline_supersedes)
+            REFERENCES __SCHEMA__.knowledge_publication_reference(repo_id, publication_id);
+        """,
+    ),
 )

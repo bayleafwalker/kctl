@@ -88,8 +88,12 @@ def test_migration_assets_are_contiguous_and_publications_store_references_only(
     assert all(len(migration.sha256) == 64 for migration in migrations)
     assert "knowledge_candidate" in migrations[0].sql
     assert "knowledge_publication_reference" in migrations[1].sql
+    assert "inline_supersedes" in migrations[2].sql
     assert "title" not in _REQUIRED_COLUMNS["knowledge_publication_reference"]
     assert "body" not in _REQUIRED_COLUMNS["knowledge_publication_reference"]
+    assert "inline_supersedes" in _REQUIRED_COLUMNS[
+        "knowledge_publication_reference"
+    ]
 
 
 def test_local_export_round_trips_digests_git_identity_and_supersession(

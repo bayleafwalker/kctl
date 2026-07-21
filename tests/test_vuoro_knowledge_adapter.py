@@ -83,6 +83,10 @@ def test_catalog_is_domain_owned_strict_and_excludes_document_authority() -> Non
     )
     assert publication_properties["git_revision"]["pattern"]
     assert publication_properties["content_digest"]["pattern"]
+    assert "inline_supersedes" not in publication_properties
+    assert "supersedes_publication_id" in publication_properties
+    publication_result = publication["result_schema"]["properties"]["publication"]
+    assert "inline_supersedes" in publication_result["properties"]
     assert not any("ratif" in name or "migrat" in name for name in names)
     assert (
         by_name["knowledge.candidate.list"]["input_schema"]["properties"]["limit"][

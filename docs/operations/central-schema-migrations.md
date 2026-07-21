@@ -38,6 +38,11 @@ The migrator serializes by schema with a transaction advisory lock. Retrying
 an already-current deployment returns an empty `applied_versions` list.
 Checksum, version, shape, role, or environment drift fails closed.
 
+Schema version 3 adds nullable `inline_supersedes` creation evidence to
+publication references. Existing and local-transfer rows migrate with `NULL`
+because their creation-time call shape is not knowable from the current graph.
+The migration does not rewrite `superseded_by` edges.
+
 ## Roles
 
 Appservice creates the concrete login roles and secrets. The migration role

@@ -611,6 +611,11 @@ class CentralKnowledgeApplication:
         source_kind = publication.get("source_kind")
         if source_kind not in CANDIDATE_KINDS:
             raise KnowledgeInputError("source_kind is unsupported")
+        supersedes = publication.get("supersedes_publication_id")
+        if supersedes is not None:
+            supersedes = _uuid(supersedes, "supersedes_publication_id")
+            if supersedes == publication_id:
+                raise KnowledgeInputError("a publication cannot supersede itself")
         expected = {
             "publication_id": publication_id,
             "repo_id": repo_id,
@@ -627,12 +632,8 @@ class CentralKnowledgeApplication:
             "source_kind": source_kind,
             "tags": _tags(publication.get("tags", [])),
             "published_at": _timestamp(publication.get("published_at"), "published_at"),
+            "inline_supersedes": supersedes,
         }
-        supersedes = publication.get("supersedes_publication_id")
-        if supersedes is not None:
-            supersedes = _uuid(supersedes, "supersedes_publication_id")
-            if supersedes == publication_id:
-                raise KnowledgeInputError("a publication cannot supersede itself")
         with self.connection() as conn, conn.transaction():
             with conn.cursor() as cur:
                 cur.execute(
@@ -653,13 +654,27 @@ class CentralKnowledgeApplication:
                     raise KnowledgeTransitionError(
                         "only approved candidates can be published"
                     )
+                if supersedes is not None:
+                    inline_target = self._publication(cur, supersedes, lock=True)
+                    if inline_target is None:
+                        raise KnowledgeNotFoundError(
+                            "inline supersession publication was not found"
+                        )
+                    if inline_target["repo_id"] != repo_id:
+                        raise KnowledgeConflictError(
+                            "inline supersession must remain in one repository"
+                        )
                 cur.execute(
                     f"""
                     INSERT INTO {self._schema}.knowledge_publication_reference (
                         publication_id, repo_id, local_entry_id, candidate_id,
                         document_id, content_path, content_anchor, git_revision,
-                        content_digest, category, source_kind, tags, published_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                        content_digest, category, source_kind, tags, published_at,
+                        inline_supersedes
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s::jsonb, %s, %s
+                    )
                     ON CONFLICT DO NOTHING
                     """,
                     (
@@ -676,6 +691,7 @@ class CentralKnowledgeApplication:
                         source_kind,
                         json.dumps(expected["tags"]),
                         expected["published_at"],
+                        supersedes,
                     ),
                 )
                 inserted = bool(cur.rowcount)
@@ -700,27 +716,14 @@ class CentralKnowledgeApplication:
                     raise KnowledgeTransitionError(
                         f"candidate is {candidate['status']}, not approved"
                     )
-                cur.execute(
-                    f"SELECT publication_id::text FROM {self._schema}.knowledge_publication_reference "
-                    "WHERE superseded_by = %s ORDER BY publication_id",
-                    (publication_id,),
-                )
-                existing_predecessors = [
-                    str(next(iter(row.values()))) for row in cur.fetchall()
-                ]
                 if inserted:
                     if supersedes is not None:
                         self._link_supersession(
                             cur, supersedes, publication_id, repo_id
                         )
-                elif supersedes is None:
-                    if existing_predecessors:
-                        raise KnowledgeConflictError(
-                            "publication retry omitted its recorded supersession evidence"
-                        )
-                elif existing_predecessors != [supersedes]:
-                    raise KnowledgeConflictError(
-                        "publication retry changed its supersession evidence"
+                elif supersedes is not None:
+                    self._require_supersession_edge(
+                        cur, supersedes, publication_id, repo_id
                     )
                 cur.execute(
                     f"UPDATE {self._schema}.knowledge_candidate SET status = 'published' "
@@ -738,6 +741,24 @@ class CentralKnowledgeApplication:
             "evidence_ref": f"knowledge:publication:{publication_id}",
             "replayed": not inserted,
         }
+
+    def _require_supersession_edge(
+        self, cur: Any, predecessor_id: str, successor_id: str, repo_id: str
+    ) -> None:
+        predecessor = self._publication(cur, predecessor_id, lock=True)
+        successor = self._publication(cur, successor_id, lock=True)
+        if predecessor is None or successor is None:
+            raise KnowledgeConflictError(
+                "recorded inline supersession target is missing"
+            )
+        if predecessor["repo_id"] != repo_id or successor["repo_id"] != repo_id:
+            raise KnowledgeConflictError(
+                "recorded inline supersession crossed a repository boundary"
+            )
+        if predecessor.get("superseded_by") != successor_id:
+            raise KnowledgeConflictError(
+                "recorded inline supersession edge no longer matches central state"
+            )
 
     def _link_supersession(
         self, cur: Any, predecessor_id: str, successor_id: str, repo_id: str

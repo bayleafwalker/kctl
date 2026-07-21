@@ -150,6 +150,7 @@ _PUBLICATION_PROPERTIES = {
     "tags": _TAGS,
     "published_at": _TIMESTAMP,
     "superseded_by": _NULLABLE_UUID,
+    "inline_supersedes": _NULLABLE_UUID,
     "imported_at": _TIMESTAMP,
 }
 _PUBLICATION_SCHEMA = {
@@ -161,7 +162,13 @@ _PUBLICATION_SCHEMA = {
 _PUBLICATION_INPUT_PROPERTIES = {
     key: value
     for key, value in _PUBLICATION_PROPERTIES.items()
-    if key not in {"publication_id", "superseded_by", "imported_at"}
+    if key
+    not in {
+        "publication_id",
+        "superseded_by",
+        "inline_supersedes",
+        "imported_at",
+    }
 }
 _PUBLICATION_INPUT_PROPERTIES["supersedes_publication_id"] = _NULLABLE_UUID
 _PUBLICATION_INPUT_SCHEMA = {

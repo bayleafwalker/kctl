@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import getpass
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -22,6 +23,7 @@ from kctl import transfer
 from kctl.application import (
     CentralKnowledgeApplication,
     KnowledgeConflictError,
+    KnowledgeNotFoundError,
     MutationEvidence,
     StaleBasisError,
 )
@@ -130,7 +132,7 @@ def _migrate_current(dsn: str, schema: str, environment: str = "vuoro-dev") -> N
             environment_name=environment,
             environment_class="development",
         )
-    assert result.installed_version == 2
+    assert result.installed_version == 3
 
 
 def _served_application(dsn: str, schema: str) -> CentralKnowledgeApplication:
@@ -319,7 +321,7 @@ def test_empty_upgrade_retry_and_checksum_drift_fail_closed(postgres_dsn: str) -
             environment_name="vuoro-dev",
             environment_class="development",
         )
-        assert upgraded.applied_versions == (2,)
+        assert upgraded.applied_versions == (2, 3)
         assert repeated.applied_versions == ()
         with conn.cursor() as cur:
             cur.execute(
@@ -335,6 +337,95 @@ def test_empty_upgrade_retry_and_checksum_drift_fail_closed(postgres_dsn: str) -
                 environment_name="vuoro-dev",
                 environment_class="development",
             )
+
+
+def test_version_three_upgrade_preserves_existing_graph_as_unknown_inline_evidence(
+    postgres_dsn: str,
+) -> None:
+    schema = _schema("knowledge_inline_upgrade")
+    with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
+        migrate(
+            conn,
+            schema=schema,
+            migration_role=MIGRATION_ROLE,
+            runtime_role=RUNTIME_ROLE,
+            environment_name="vuoro-dev",
+            environment_class="development",
+            target_version=2,
+        )
+        publication_ids: list[str] = []
+        with conn.cursor() as cur:
+            for local_id in (1, 2):
+                cur.execute(
+                    f"""
+                    INSERT INTO "{schema}".knowledge_candidate (
+                        repo_id, local_candidate_id, source_event_id,
+                        source_sprint_id, event_type, candidate_kind, summary,
+                        tags, status, content_digest, basis_git_revision,
+                        extracted_at
+                    ) VALUES (
+                        'kctl-upgrade', %s, %s, 381, 'decision', 'durable', %s,
+                        '[]'::jsonb, 'published', %s, %s, clock_timestamp()
+                    ) RETURNING candidate_id
+                    """,
+                    (
+                        local_id,
+                        20_000 + local_id,
+                        f"Upgrade candidate {local_id}",
+                        "sha256:" + f"{local_id:x}" * 64,
+                        GIT_REVISION,
+                    ),
+                )
+                candidate_id = cur.fetchone()["candidate_id"]
+                cur.execute(
+                    f"""
+                    INSERT INTO "{schema}".knowledge_publication_reference (
+                        repo_id, local_entry_id, candidate_id, document_id,
+                        content_path, content_anchor, git_revision,
+                        content_digest, category, source_kind, tags, published_at
+                    ) VALUES (
+                        'kctl-upgrade', %s, %s, 'kctl-upgrade:knowledge-base',
+                        'docs/knowledge/knowledge-base.md', %s, %s, %s,
+                        'decision', 'durable', '[]'::jsonb, clock_timestamp()
+                    ) RETURNING publication_id::text
+                    """,
+                    (
+                        local_id,
+                        candidate_id,
+                        f"entry-{local_id}",
+                        GIT_REVISION,
+                        "sha256:" + f"{local_id + 2:x}" * 64,
+                    ),
+                )
+                publication_ids.append(cur.fetchone()["publication_id"])
+            cur.execute(
+                f'UPDATE "{schema}".knowledge_publication_reference '
+                "SET superseded_by = %s WHERE publication_id = %s",
+                (publication_ids[1], publication_ids[0]),
+            )
+        upgraded = migrate(
+            conn,
+            schema=schema,
+            migration_role=MIGRATION_ROLE,
+            runtime_role=RUNTIME_ROLE,
+            environment_name="vuoro-dev",
+            environment_class="development",
+        )
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT publication_id::text, superseded_by::text,
+                       inline_supersedes::text
+                FROM "{schema}".knowledge_publication_reference
+                ORDER BY local_entry_id
+                """
+            )
+            rows = cur.fetchall()
+
+    assert upgraded.applied_versions == (3,)
+    assert rows[0]["superseded_by"] == publication_ids[1]
+    assert rows[1]["superseded_by"] is None
+    assert all(row["inline_supersedes"] is None for row in rows)
 
 
 def test_concurrent_migration_jobs_serialize(postgres_dsn: str) -> None:
@@ -365,7 +456,7 @@ def test_concurrent_migration_jobs_serialize(postgres_dsn: str) -> None:
     for thread in threads:
         thread.join(timeout=20)
     assert not failures
-    assert sorted(results, key=len) == [(), (1, 2)]
+    assert sorted(results, key=len) == [(), (1, 2, 3)]
 
 
 def test_runtime_role_is_compatible_but_cannot_execute_ddl(postgres_dsn: str) -> None:
@@ -836,7 +927,7 @@ def test_served_publication_references_supersession_and_changed_retries(
         )
     changed_supersession = copy.deepcopy(second_input)
     changed_supersession["supersedes_publication_id"] = None
-    with pytest.raises(KnowledgeConflictError, match="omitted"):
+    with pytest.raises(KnowledgeConflictError, match="immutable evidence"):
         restarted.record_publication_reference(
             changed_supersession, evidence=_evidence(key="publish-2")
         )
@@ -876,3 +967,352 @@ def test_served_publication_references_supersession_and_changed_retries(
     assert (
         shown["publication"]["publication_id"] == third["publication"]["publication_id"]
     )
+
+
+def test_publication_creation_evidence_is_independent_of_later_explicit_edges(
+    postgres_dsn: str,
+) -> None:
+    schema = _schema("knowledge_creation_evidence")
+    _migrate_current(postgres_dsn, schema)
+    application = _served_application(postgres_dsn, schema)
+
+    def create(local_id: int, *, repo_id: str = "kctl-retry") -> dict[str, Any]:
+        candidate = _served_candidate(local_id, repo_id=repo_id)
+        intake = application.intake_candidate(
+            candidate, evidence=_evidence(key=f"intake-{repo_id}-{local_id}")
+        )
+        candidate_id = intake["candidate"]["candidate_id"]
+        application.approve_candidate(
+            candidate_id=candidate_id,
+            evidence=_evidence(key=f"approve-{repo_id}-{local_id}"),
+        )
+        request = _served_publication(local_id, candidate_id, repo_id=repo_id)
+        result = application.record_publication_reference(
+            request, evidence=_evidence(key=f"publish-{repo_id}-{local_id}")
+        )
+        return {"request": request, "result": result}
+
+    first = create(1)
+    second = create(2)
+    third = create(3)
+    fourth_candidate = _served_candidate(4, repo_id="kctl-retry")
+    fourth_intake = application.intake_candidate(
+        fourth_candidate, evidence=_evidence(key="intake-kctl-retry-4")
+    )
+    application.approve_candidate(
+        candidate_id=fourth_intake["candidate"]["candidate_id"],
+        evidence=_evidence(key="approve-kctl-retry-4"),
+    )
+    fourth_request = _served_publication(
+        4,
+        fourth_intake["candidate"]["candidate_id"],
+        repo_id="kctl-retry",
+        supersedes=third["result"]["publication"]["publication_id"],
+    )
+    fourth = application.record_publication_reference(
+        fourth_request, evidence=_evidence(key="publish-kctl-retry-4")
+    )
+
+    application.supersede_publication(
+        predecessor_id=first["result"]["publication"]["publication_id"],
+        successor_id=second["result"]["publication"]["publication_id"],
+        evidence=_evidence(key="explicit-1-2"),
+    )
+    restarted = _served_application(postgres_dsn, schema)
+    no_inline_replay = restarted.record_publication_reference(
+        second["request"], evidence=_evidence(key="publish-kctl-retry-2")
+    )
+    inline_replay = restarted.record_publication_reference(
+        fourth_request, evidence=_evidence(key="publish-kctl-retry-4")
+    )
+    assert no_inline_replay["replayed"] is True
+    assert no_inline_replay["publication"]["inline_supersedes"] is None
+    assert inline_replay["replayed"] is True
+    assert (
+        inline_replay["publication"]["inline_supersedes"]
+        == third["result"]["publication"]["publication_id"]
+    )
+
+    changed_inline = copy.deepcopy(fourth_request)
+    changed_inline["supersedes_publication_id"] = first["result"]["publication"][
+        "publication_id"
+    ]
+    with pytest.raises(KnowledgeConflictError, match="immutable evidence"):
+        restarted.record_publication_reference(
+            changed_inline, evidence=_evidence(key="publish-kctl-retry-4")
+        )
+
+    application.supersede_publication(
+        predecessor_id=second["result"]["publication"]["publication_id"],
+        successor_id=fourth["publication"]["publication_id"],
+        evidence=_evidence(key="explicit-2-4"),
+    )
+    unrelated_edge_replay = _served_application(
+        postgres_dsn, schema
+    ).record_publication_reference(
+        fourth_request, evidence=_evidence(key="publish-kctl-retry-4")
+    )
+    assert unrelated_edge_replay["replayed"] is True
+    assert (
+        unrelated_edge_replay["publication"]["inline_supersedes"]
+        == third["result"]["publication"]["publication_id"]
+    )
+
+
+def test_explicit_supersession_rejects_missing_cross_repo_and_cycles(
+    postgres_dsn: str,
+) -> None:
+    schema = _schema("knowledge_supersession_guards")
+    _migrate_current(postgres_dsn, schema)
+    application = _served_application(postgres_dsn, schema)
+
+    def create(local_id: int, repo_id: str) -> str:
+        intake = application.intake_candidate(
+            _served_candidate(local_id, repo_id=repo_id),
+            evidence=_evidence(key=f"intake-{repo_id}-{local_id}"),
+        )
+        candidate_id = intake["candidate"]["candidate_id"]
+        application.approve_candidate(
+            candidate_id=candidate_id,
+            evidence=_evidence(key=f"approve-{repo_id}-{local_id}"),
+        )
+        result = application.record_publication_reference(
+            _served_publication(local_id, candidate_id, repo_id=repo_id),
+            evidence=_evidence(key=f"publish-{repo_id}-{local_id}"),
+        )
+        return result["publication"]["publication_id"]
+
+    first = create(1, "kctl-guards")
+    second = create(2, "kctl-guards")
+    other_repo = create(1, "other-guards")
+    pending = application.intake_candidate(
+        _served_candidate(3, repo_id="kctl-guards"),
+        evidence=_evidence(key="intake-kctl-guards-3"),
+    )
+    pending_id = pending["candidate"]["candidate_id"]
+    application.approve_candidate(
+        candidate_id=pending_id,
+        evidence=_evidence(key="approve-kctl-guards-3"),
+    )
+    missing_inline = _served_publication(3, pending_id, repo_id="kctl-guards")
+    missing_inline["supersedes_publication_id"] = "00000000-0000-4000-8000-000000000002"
+    with pytest.raises(KnowledgeNotFoundError, match="not found"):
+        application.record_publication_reference(
+            missing_inline, evidence=_evidence(key="missing-inline")
+        )
+    cross_repo_inline = copy.deepcopy(missing_inline)
+    cross_repo_inline["supersedes_publication_id"] = other_repo
+    with pytest.raises(KnowledgeConflictError, match="one repository"):
+        application.record_publication_reference(
+            cross_repo_inline, evidence=_evidence(key="cross-repo-inline")
+        )
+    with pytest.raises(KnowledgeNotFoundError, match="not found"):
+        application.supersede_publication(
+            predecessor_id="00000000-0000-4000-8000-000000000001",
+            successor_id=second,
+            evidence=_evidence(key="missing-predecessor"),
+        )
+    with pytest.raises(KnowledgeConflictError, match="one repository"):
+        application.supersede_publication(
+            predecessor_id=first,
+            successor_id=other_repo,
+            evidence=_evidence(key="cross-repo"),
+        )
+    application.supersede_publication(
+        predecessor_id=first,
+        successor_id=second,
+        evidence=_evidence(key="first-second"),
+    )
+    with pytest.raises(KnowledgeConflictError, match="cycle"):
+        application.supersede_publication(
+            predecessor_id=second,
+            successor_id=first,
+            evidence=_evidence(key="cycle"),
+        )
+
+
+if os.environ.get("KCTL_REAL_VUORO_TESTS") == "1":
+
+    def test_real_vuoro_postgres_restart_preserves_publication_creation_evidence(
+        postgres_dsn: str,
+    ) -> None:
+        """Run only in the explicitly composed Vuoro+kctl verification environment."""
+        import asyncio
+
+        import httpx
+        from vuoro_client import AsyncVuoroClient, Profile
+        from vuoro_client.errors import InvocationRejectedError
+        from vuoro_service.app import ServiceSettings, create_app
+        from vuoro_service.catalog import CatalogRegistry
+        from vuoro_service.contracts import DomainCompatibility
+        from vuoro_service.identity import Identity, StaticBearerIdentityResolver
+
+        from kctl.vuoro import VuoroKnowledgeAdapter
+
+        schema = _schema("knowledge_real_vuoro_restart")
+        _migrate_current(postgres_dsn, schema)
+        repo_id = "kctl-real-restart"
+        publication_requests: dict[int, dict[str, Any]] = {}
+        publications: dict[int, dict[str, Any]] = {}
+
+        async def invoke(
+            operation: str,
+            arguments: dict[str, Any],
+            *,
+            key: str,
+            request_id: str,
+        ) -> dict[str, Any]:
+            # Recreate every layer so retries cannot depend on process memory.
+            application = _served_application(postgres_dsn, schema)
+            registry = CatalogRegistry()
+            VuoroKnowledgeAdapter(application).register(registry)
+            service = create_app(
+                settings=ServiceSettings(
+                    environment_name="vuoro-dev",
+                    environment_class="development",
+                    compatibility_state="compatible",
+                    domains={
+                        "knowledge": DomainCompatibility(
+                            api_version="knowledge/v1",
+                            schema_version="3",
+                            state="compatible",
+                        )
+                    },
+                ),
+                registry=registry,
+                identity_resolver=StaticBearerIdentityResolver(
+                    {
+                        "token": Identity(
+                            actor="human:reviewer",
+                            environment="vuoro-dev",
+                            authorities=frozenset(
+                                {
+                                    "knowledge.candidate.intake",
+                                    "knowledge.review",
+                                    "knowledge.publication-reference.write",
+                                    "knowledge.read",
+                                }
+                            ),
+                        )
+                    }
+                ),
+            )
+            async with AsyncVuoroClient(
+                Profile(
+                    "restart-test",
+                    "http://test",
+                    "identity",
+                    expected_environment="vuoro-dev",
+                ),
+                lambda _reference: "token",
+                transport=httpx.ASGITransport(app=service),
+            ) as client:
+                return await client.invoke(
+                    operation,
+                    arguments,
+                    request_id=request_id,
+                    basis_revision=GIT_REVISION,
+                    idempotency_key=key,
+                )
+
+        async def create(local_id: int, *, inline: int | None = None) -> None:
+            candidate = _served_candidate(local_id, repo_id=repo_id)
+            intake = await invoke(
+                "knowledge.candidate.intake",
+                {"candidate": candidate},
+                key=f"intake-{local_id}",
+                request_id=f"intake-{local_id}",
+            )
+            candidate_id = intake["candidate"]["candidate_id"]
+            await invoke(
+                "knowledge.candidate.approve",
+                {"candidate_id": candidate_id},
+                key=f"approve-{local_id}",
+                request_id=f"approve-{local_id}",
+            )
+            inline_id = (
+                publications[inline]["publication_id"] if inline is not None else None
+            )
+            request = _served_publication(
+                local_id,
+                candidate_id,
+                repo_id=repo_id,
+                supersedes=inline_id,
+            )
+            publication_requests[local_id] = request
+            result = await invoke(
+                "knowledge.publication-reference.record",
+                {"publication": request},
+                key=f"publish-{local_id}",
+                request_id=f"publish-{local_id}",
+            )
+            publications[local_id] = result["publication"]
+
+        async def history() -> None:
+            await create(1)
+            await create(2)
+            await invoke(
+                "knowledge.publication-reference.supersede",
+                {
+                    "predecessor_id": publications[1]["publication_id"],
+                    "successor_id": publications[2]["publication_id"],
+                },
+                key="explicit-1-2",
+                request_id="explicit-1-2",
+            )
+            no_inline_replay = await invoke(
+                "knowledge.publication-reference.record",
+                {"publication": publication_requests[2]},
+                key="publish-2",
+                request_id="publish-2-after-restart",
+            )
+            assert no_inline_replay["replayed"] is True
+            assert no_inline_replay["publication"]["inline_supersedes"] is None
+
+            await create(3)
+            await create(4, inline=3)
+            inline_replay = await invoke(
+                "knowledge.publication-reference.record",
+                {"publication": publication_requests[4]},
+                key="publish-4",
+                request_id="publish-4-after-restart",
+            )
+            assert inline_replay["replayed"] is True
+            assert (
+                inline_replay["publication"]["inline_supersedes"]
+                == publications[3]["publication_id"]
+            )
+
+            changed = copy.deepcopy(publication_requests[4])
+            changed["supersedes_publication_id"] = publications[1]["publication_id"]
+            with pytest.raises(InvocationRejectedError) as conflict:
+                await invoke(
+                    "knowledge.publication-reference.record",
+                    {"publication": changed},
+                    key="publish-4",
+                    request_id="publish-4-changed-inline",
+                )
+            assert conflict.value.code == "knowledge-evidence-conflict"
+
+            await invoke(
+                "knowledge.publication-reference.supersede",
+                {
+                    "predecessor_id": publications[2]["publication_id"],
+                    "successor_id": publications[4]["publication_id"],
+                },
+                key="explicit-2-4",
+                request_id="explicit-2-4",
+            )
+            later_edge_replay = await invoke(
+                "knowledge.publication-reference.record",
+                {"publication": publication_requests[4]},
+                key="publish-4",
+                request_id="publish-4-after-unrelated-edge",
+            )
+            assert later_edge_replay["replayed"] is True
+            assert (
+                later_edge_replay["publication"]["inline_supersedes"]
+                == publications[3]["publication_id"]
+            )
+
+        asyncio.run(history())

@@ -27,7 +27,7 @@ knowledge artifacts remain usable and do not call the central database.
 | --- | --- | --- |
 | `knowledge_candidate` | candidate content, provenance, lifecycle status, digest, and export-basis Git revision | `(repo_id, local_candidate_id)` and `(repo_id, source_event_id)` |
 | `knowledge_review` | one imported approve/reject decision and its reviewer evidence | `candidate_id` |
-| `knowledge_publication_reference` | Git-owned publication identity, digest, and supersession link without document content | `(repo_id, local_entry_id)` |
+| `knowledge_publication_reference` | Git-owned publication identity, digest, supersession link, and immutable creation-time inline-supersession evidence without document content | `(repo_id, local_entry_id)` |
 | `schema_migration` | immutable migration version, name, and SHA-256 | `version` |
 | `schema_principal` | migration/runtime role and environment binding | `role_kind` |
 
@@ -112,6 +112,15 @@ Optional initial supersession and the explicit supersession operation require
 same-repository references and reject self-links, changed successors, and
 cycles. Exact retries retain stable publication and evidence references.
 
+`inline_supersedes` records only the optional predecessor supplied when the
+publication reference was first created. The graph edge itself remains the
+predecessor row's `superseded_by`. A creation retry must repeat the stored
+inline value, and an inline retry also requires that original graph edge to
+remain present. Later explicit supersession operations may add other incoming
+edges without changing `inline_supersedes`; therefore replaying an exact
+no-inline or inline publication request remains a no-op after application,
+registry, service, and client restart.
+
 List operations enforce a maximum of 100 rows in the application core as well
 as in catalog schemas. Recreating the application or service does not alter
 retry identity because candidate, review, and publication rows are the durable
@@ -139,6 +148,7 @@ role provisioning are outside this repository.
 The hermetic PostgreSQL gate covers empty/current upgrade, serialized
 concurrent migration, retry, checksum drift, runtime DDL and ledger-write
 denial, local import retry, Git/digest preservation, absence of published
-content columns, and isolated environment schemas. This is bounded
+content columns, served publication creation evidence across restart, and
+isolated environment schemas. This is bounded
 concurrency evidence, not a claim of distributed transaction or cross-schema
 atomicity.
