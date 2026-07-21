@@ -1,0 +1,106 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.central-workflow",
+  "owner_repo": "kctl",
+  "subject": "central-knowledge-review-and-publication-reference",
+  "contract_ref": {
+    "doc_id": "kctl.central-knowledge-workflow",
+    "revision": "sha256:16d6737109b907240659e8fb4bf5c391e90bd88a3696c9d5bb723d7e9c8f5236"
+  },
+  "source_of_truth": "postgresql-knowledge-workflow-plus-git-published-content",
+  "depth": 2,
+  "backends": ["sqlite-export", "json-transfer", "postgresql"],
+  "actors": [
+    "local-exporter",
+    "deployment-migrator-a",
+    "deployment-migrator-b",
+    "runtime-importer",
+    "runtime-reader"
+  ],
+  "initial_state": [
+    "a local SQLite candidate and publication may exist",
+    "the central schema may be absent or one migration behind",
+    "Git contains the referenced published content"
+  ],
+  "operations": [
+    {
+      "name": "export-local",
+      "actors": ["local-exporter"],
+      "synchronization": "single-writer-atomic-replace"
+    },
+    {
+      "name": "migrate",
+      "actors": ["deployment-migrator-a", "deployment-migrator-b"],
+      "synchronization": "per-schema-postgresql-advisory-transaction-lock"
+    },
+    {
+      "name": "check-compatibility",
+      "actors": ["runtime-reader"],
+      "synchronization": "read-only-catalog-inspection"
+    },
+    {
+      "name": "import-local",
+      "actors": ["runtime-importer"],
+      "synchronization": "per-schema-and-repository-postgresql-advisory-transaction-lock"
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "central-knowledge-transfer-and-schema"
+  },
+  "assumptions": {
+    "isolation": "postgresql-read-committed-plus-transaction-advisory-locks",
+    "clock": "database-clock-plus-exporter-supplied-UTC-timestamp",
+    "fairness": "a lock holder eventually commits or disconnects"
+  },
+  "bounds": {
+    "candidates": 1000,
+    "publications": 1000,
+    "migration_jobs": 2,
+    "operation_sequences": 100
+  },
+  "invariants": [
+    "packaged-migration-versions-are-contiguous-and-checksummed",
+    "concurrent-migration-jobs-apply-each-version-once",
+    "runtime-role-has-no-ddl-or-migration-ledger-write-authority",
+    "runtime-compatibility-is-read-only-and-fails-closed",
+    "candidate-and-publication-digests-survive-local-transfer",
+    "every-publication-reference-retains-a-full-git-revision",
+    "central-publication-reference-stores-no-title-or-body",
+    "supersession-targets-exist-in-the-same-repository-and-are-acyclic",
+    "repeating-an-identical-import-is-a-no-op",
+    "environment-binding-prevents-vuoro-dev-from-accepting-another-environment-schema"
+  ],
+  "faults": [
+    "concurrent-empty-schema-migration",
+    "migration-checksum-drift",
+    "connection-loss-after-import-commit-before-response",
+    "tampered-content-with-recomputed-artifact-digest",
+    "path-traversal-content-reference",
+    "missing-or-cyclic-supersession-reference",
+    "runtime-role-attempts-ddl",
+    "runtime-role-attempts-migration-ledger-write"
+  ],
+  "oracles": [
+    "migration-ledger-and-packaged-checksum-comparison",
+    "postgresql-privilege-error",
+    "canonical-content-digest",
+    "git-revision-pattern",
+    "artifact-self-digest",
+    "central-relation-column-set",
+    "stable-local-identity-count"
+  ],
+  "implementation_anchors": [
+    "kctl/central_schema.py:migrate",
+    "kctl/central_schema.py:check_compatibility",
+    "kctl/transfer.py:build_artifact",
+    "kctl/transfer.py:validate_artifact",
+    "kctl/transfer.py:import_artifact"
+  ],
+  "expansions": [
+    "transfer-artifact-unit-test",
+    "hermetic-postgresql-migration-test",
+    "runtime-role-privilege-test",
+    "environment-isolation-test"
+  ]
+}
