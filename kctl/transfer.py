@@ -506,6 +506,7 @@ def import_artifact(conn: Any, *, schema: str, value: dict[str, Any]) -> dict[st
     inserted_publications = 0
     candidate_ids: dict[int, str] = {}
     publication_ids: dict[int, str] = {}
+    inserted_publication_ids: set[int] = set()
 
     with conn.transaction():
         with conn.cursor() as cur:
@@ -713,7 +714,9 @@ def import_artifact(conn: Any, *, schema: str, value: dict[str, Any]) -> dict[st
                         publication["published_at"],
                     ),
                 )
-                inserted_publications += cur.rowcount
+                if cur.rowcount:
+                    inserted_publications += cur.rowcount
+                    inserted_publication_ids.add(local_id)
                 cur.execute(
                     f"""
                     SELECT publication_id::text AS publication_id, repo_id,
@@ -785,11 +788,17 @@ def import_artifact(conn: Any, *, schema: str, value: dict[str, Any]) -> dict[st
                 current_target = (
                     next(iter(row.values())) if isinstance(row, dict) else row[0]
                 )
-                if current_target not in (None, expected_target):
+                if local_id not in inserted_publication_ids:
+                    if current_target != expected_target:
+                        raise TransferConflictError(
+                            f"publication #{local_id} supersession conflicts with central state"
+                        )
+                    continue
+                if current_target is not None:
                     raise TransferConflictError(
-                        f"publication #{local_id} supersession conflicts with central state"
+                        f"new publication #{local_id} has unexpected central supersession state"
                     )
-                if current_target is None and expected_target is not None:
+                if expected_target is not None:
                     cur.execute(
                         f"""
                         UPDATE {schema_ident}.knowledge_publication_reference

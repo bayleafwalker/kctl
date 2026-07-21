@@ -126,45 +126,66 @@ def _migrate_current(dsn: str, schema: str, environment: str = "vuoro-dev") -> N
     assert result.installed_version == 2
 
 
-def _artifact(tmp_path: Path, repo_id: str = "kctl") -> dict:
+def _artifact(
+    tmp_path: Path,
+    repo_id: str = "kctl",
+    *,
+    publication_count: int = 1,
+    supersede_first_to: int | None = None,
+) -> dict:
+    if publication_count < 1:
+        raise ValueError("publication_count must be positive")
+    if supersede_first_to is not None and not (
+        1 <= supersede_first_to < publication_count
+    ):
+        raise ValueError("supersede_first_to must select a later publication")
     conn = db.get_connection(tmp_path / f"{repo_id}.db")
     db.init_db(conn)
-    candidate_id = db.insert_candidate(
-        conn,
-        {
-            "source_event_id": 1,
-            "source_sprint_id": 381,
-            "source_item_id": 1199,
-            "track_name": "served-substrate",
-            "source_actor": "codex:integration",
-            "source_type": "actor",
-            "source_created_at": "2026-07-21T11:00:00Z",
-            "source_payload": json.dumps({"summary": "Central knowledge"}),
-            "event_type": "decision",
-            "candidate_kind": "durable",
-            "summary": "Central knowledge",
-            "detail": "Preserve Git identity and digest",
-            "tags": '["vuoro"]',
-            "confidence": "high",
-            "extracted_at": "2026-07-21T11:00:00Z",
-        },
-    )
-    assert candidate_id is not None
-    review.approve_candidate(
-        conn,
-        candidate_id,
-        now="2026-07-21T11:05:00Z",
-        reviewed_by="human:integration",
-    )
-    publish.publish_candidate(
-        conn,
-        candidate_id,
-        title="Central schema",
-        body="Git remains canonical.",
-        category="decision",
-        tags='["vuoro"]',
-        now="2026-07-21T11:10:00Z",
-    )
+    entries: list[dict] = []
+    for index in range(publication_count):
+        number = index + 1
+        candidate_id = db.insert_candidate(
+            conn,
+            {
+                "source_event_id": number,
+                "source_sprint_id": 381,
+                "source_item_id": 1199,
+                "track_name": "served-substrate",
+                "source_actor": "codex:integration",
+                "source_type": "actor",
+                "source_created_at": f"2026-07-21T11:00:0{index}Z",
+                "source_payload": json.dumps(
+                    {"summary": f"Central knowledge {number}"}
+                ),
+                "event_type": "decision",
+                "candidate_kind": "durable",
+                "summary": f"Central knowledge {number}",
+                "detail": f"Preserve Git identity and digest {number}",
+                "tags": '["vuoro"]',
+                "confidence": "high",
+                "extracted_at": f"2026-07-21T11:00:0{index}Z",
+            },
+        )
+        assert candidate_id is not None
+        review.approve_candidate(
+            conn,
+            candidate_id,
+            now=f"2026-07-21T11:05:0{index}Z",
+            reviewed_by="human:integration",
+        )
+        supersedes_entry_id = entries[0]["id"] if supersede_first_to == index else None
+        entries.append(
+            publish.publish_candidate(
+                conn,
+                candidate_id,
+                title=f"Central schema {number}",
+                body=f"Git remains canonical, revision {number}.",
+                category="decision",
+                tags='["vuoro"]',
+                supersedes_entry_id=supersedes_entry_id,
+                now=f"2026-07-21T11:10:0{index}Z",
+            )
+        )
     value = transfer.build_artifact(
         conn,
         repo_id=repo_id,
@@ -417,12 +438,102 @@ def test_import_retry_rejects_each_changed_persisted_evidence_field(
     assert retained["document_id"] == original["publications"][0]["document_id"]
 
 
+def test_first_import_establishes_supersession_and_identical_retry_is_noop(
+    postgres_dsn: str, tmp_path: Path
+) -> None:
+    schema = _schema("knowledge_first_supersession")
+    _migrate_current(postgres_dsn, schema)
+    value = _artifact(
+        tmp_path,
+        repo_id="kctl-first-supersession",
+        publication_count=2,
+        supersede_first_to=1,
+    )
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        first = transfer.import_artifact(conn, schema=schema, value=value)
+        retried = transfer.import_artifact(conn, schema=schema, value=value)
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT superseded_by IS NOT NULL AS linked
+                FROM "{schema}".knowledge_publication_reference
+                WHERE local_entry_id = %s
+                """,
+                (value["publications"][0]["local_entry_id"],),
+            )
+            linked = cur.fetchone()["linked"]
+
+    assert linked
+    assert first["inserted_publications"] == 2
+    assert retried["inserted_publications"] == 0
+
+
+def test_retry_rejects_every_supersession_change_direction(
+    postgres_dsn: str, tmp_path: Path
+) -> None:
+    null_to_value = _artifact(
+        tmp_path,
+        repo_id="kctl-null-to-value",
+        publication_count=2,
+    )
+    value_to_null = _artifact(
+        tmp_path,
+        repo_id="kctl-value-to-null",
+        publication_count=2,
+        supersede_first_to=1,
+    )
+    value_to_different = _artifact(
+        tmp_path,
+        repo_id="kctl-value-to-different",
+        publication_count=3,
+        supersede_first_to=1,
+    )
+
+    cases: list[tuple[str, dict, dict]] = []
+    for label, original in (
+        ("null_to_value", null_to_value),
+        ("value_to_null", value_to_null),
+        ("value_to_different", value_to_different),
+    ):
+        changed = copy.deepcopy(original)
+        if label == "null_to_value":
+            changed["publications"][0]["superseded_by_local_entry_id"] = changed[
+                "publications"
+            ][1]["local_entry_id"]
+        elif label == "value_to_null":
+            changed["publications"][0]["superseded_by_local_entry_id"] = None
+        else:
+            changed["publications"][0]["superseded_by_local_entry_id"] = changed[
+                "publications"
+            ][2]["local_entry_id"]
+        changed["artifact_digest"] = transfer._artifact_digest(changed)
+        transfer.validate_artifact(changed)
+        cases.append((label, original, changed))
+
+    for label, original, changed in cases:
+        schema = _schema(f"knowledge_{label}")
+        _migrate_current(postgres_dsn, schema)
+        with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+            transfer.import_artifact(conn, schema=schema, value=original)
+            with pytest.raises(
+                transfer.TransferConflictError, match="supersession conflicts"
+            ):
+                transfer.import_artifact(conn, schema=schema, value=changed)
+            identical = transfer.import_artifact(conn, schema=schema, value=original)
+        assert identical["inserted_publications"] == 0
+
+
 def test_concurrent_local_import_retries_apply_once(
     postgres_dsn: str, tmp_path: Path
 ) -> None:
     schema = _schema("knowledge_import_parallel")
     _migrate_current(postgres_dsn, schema)
-    value = _artifact(tmp_path, repo_id="kctl-parallel")
+    value = _artifact(
+        tmp_path,
+        repo_id="kctl-parallel",
+        publication_count=2,
+        supersede_first_to=1,
+    )
     barrier = threading.Barrier(2)
     results: list[dict] = []
     failures: list[BaseException] = []
@@ -444,9 +555,9 @@ def test_concurrent_local_import_retries_apply_once(
         thread.join(timeout=20)
 
     assert not failures
-    assert sorted(result["inserted_candidates"] for result in results) == [0, 1]
-    assert sorted(result["inserted_reviews"] for result in results) == [0, 1]
-    assert sorted(result["inserted_publications"] for result in results) == [0, 1]
+    assert sorted(result["inserted_candidates"] for result in results) == [0, 2]
+    assert sorted(result["inserted_reviews"] for result in results) == [0, 2]
+    assert sorted(result["inserted_publications"] for result in results) == [0, 2]
 
 
 def test_vuoro_dev_schema_is_isolated_from_another_environment(
