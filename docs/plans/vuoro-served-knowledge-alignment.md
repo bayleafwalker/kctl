@@ -32,3 +32,9 @@ agentops. Kctl may surface ratification evidence but does not autonomously set
 `vuoro-dev` acceptance covers candidate deduplication, approve/reject,
 supersession, publication references, retries, and service restart without
 using production knowledge state.
+
+## Backlog registration
+
+- **#1199** — central review schema, deployment migration, and role split.
+- **#1200** — knowledge application core and Vuoro adapter/catalog; blocked by
+  #1199.
