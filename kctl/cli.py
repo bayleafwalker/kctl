@@ -151,7 +151,7 @@ def _entry_json(e: dict) -> dict:
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
     # Served review reads must never bootstrap/open the local knowledge store.
-    if os.environ.get("SPRINTCTL_BACKEND", "local").lower() == "served" and ctx.invoked_subcommand in {"review", "status"}:
+    if os.environ.get("SPRINTCTL_BACKEND", "local").lower() == "served" and ctx.invoked_subcommand in {"review", "status", "extract"}:
         try:
             source = _source.open_sprintctl_source()
         except _source.SprintctlSourceError as exc:
@@ -195,10 +195,10 @@ def cli(ctx: click.Context) -> None:
     help="Remote sprintctl repo ID (default: KCTL_SPRINTCTL_REPO_ID or current repository)",
 )
 @click.option("--no-preflight", is_flag=True, default=False, help="Skip sprintctl maintain check")
+@click.option("--basis-git-revision", default=None, help="Required full 40/64-hex Git commit in served mode")
 @click.pass_obj
-def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, sprintctl_repo_id, no_preflight) -> None:
+def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, sprintctl_repo_id, no_preflight, basis_git_revision) -> None:
     """Extract knowledge candidates from sprintctl events."""
-    kctl_conn = obj["conn"]
     now = _now()
 
     try:
@@ -209,6 +209,31 @@ def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, sprintctl_repo_
     except _source.SprintctlSourceError as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
+
+    if isinstance(source, _source.ServedSprintctlSource):
+        if not basis_git_revision:
+            click.echo("Error: served extraction requires --basis-git-revision <full-commit>", err=True)
+            sys.exit(1)
+        client = ServedKnowledgeClient(source.profile, source.repo_id)
+        try:
+            if not no_preflight:
+                warnings = _extract.run_preflight_for_source(source, sprint_id=sprint_id)
+                failure = next((warning for warning in warnings if warning.startswith("Preflight check failed:")), None)
+                if failure:
+                    click.echo(f"Warning: {failure}", err=True)
+                    sys.exit(1)
+            event_type_set = _extract.resolve_event_types(event_types)
+            events = source.fetch_events(since_event_id=0, event_types=event_type_set, sprint_id=sprint_id)
+            results = [client.intake_candidate(_extract.build_candidate(event, now)[0], basis_git_revision=basis_git_revision) for event in events]
+        except (ValueError, _source.SprintctlSourceError) as exc:
+            click.echo(f"Error: {exc}", err=True)
+            sys.exit(1)
+        finally:
+            source.close()
+        click.echo(f"Extracted {sum(not result.get('replayed', False) for result in results)} new candidate(s) through served intake.")
+        return
+
+    kctl_conn = obj["conn"]
 
     try:
         if not no_preflight:

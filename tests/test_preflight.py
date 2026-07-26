@@ -248,7 +248,7 @@ def test_cli_served_extract_preflight_failure_is_an_honest_served_error(monkeypa
     monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
     monkeypatch.setattr(source, "maintain_check", lambda _sprint_id: (_ for _ in ()).throw(RuntimeError("catalog unavailable")))
 
-    result = runner.invoke(cli, ["extract", "--sprint-id", "7"])
+    result = runner.invoke(cli, ["extract", "--sprint-id", "7", "--basis-git-revision", "a" * 40])
 
     assert result.exit_code != 0
     assert "Preflight check failed: catalog unavailable" in result.output
