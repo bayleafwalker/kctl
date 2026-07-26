@@ -13,6 +13,7 @@ from . import proposal as _proposal
 from . import publish as _publish
 from . import review as _review
 from . import source as _source
+from .served_knowledge import ServedKnowledgeClient
 
 
 def _now() -> str:
@@ -149,6 +150,17 @@ def _entry_json(e: dict) -> dict:
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
+    # Served review reads must never bootstrap/open the local knowledge store.
+    if os.environ.get("SPRINTCTL_BACKEND", "local").lower() == "served" and ctx.invoked_subcommand == "review":
+        try:
+            source = _source.open_sprintctl_source()
+        except _source.SprintctlSourceError as exc:
+            raise click.ClickException(str(exc)) from exc
+        if not isinstance(source, _source.ServedSprintctlSource):
+            raise click.ClickException("served knowledge review requires a served Sprintctl source")
+        ctx.obj["served_knowledge"] = ServedKnowledgeClient(source.profile, source.repo_id)
+        ctx.call_on_close(source.close)
+        return
     db_path = _db.get_db_path()
     conn = _db.get_connection(db_path)
     _db.init_db(conn)
@@ -284,6 +296,24 @@ def review_group() -> None:
 @click.pass_obj
 def review_list(obj, status, kind, tag, sprint_id, output_json) -> None:
     """List candidates."""
+    served = obj.get("served_knowledge")
+    if served is not None:
+        if tag is not None or sprint_id is not None:
+            raise click.UsageError("--tag and --sprint-id are not available for served candidate lists")
+        result = served.list_candidates(
+            status=None if status == "all" else status,
+            candidate_kind=None if kind == "all" else kind,
+        )
+        candidates = result["candidates"]
+        if output_json:
+            click.echo(json.dumps(candidates))
+            return
+        if not candidates:
+            click.echo("No candidates found.")
+            return
+        for candidate in candidates:
+            click.echo(f"  {candidate['candidate_id']}  [{candidate['status']}]  {candidate['summary']}")
+        return
     conn = obj["conn"]
     effective_status = None if status == "all" else status
     effective_kind = None if kind == "all" else kind
@@ -311,12 +341,27 @@ def review_list(obj, status, kind, tag, sprint_id, output_json) -> None:
 
 
 @review_group.command("show")
-@click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID")
+@click.option("--id", "candidate_id", type=str, required=True, help="Candidate ID (UUID in served mode)")
 @click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON (for agent consumption)")
 @click.pass_obj
 def review_show(obj, candidate_id, output_json) -> None:
     """Show a candidate in detail."""
+    served = obj.get("served_knowledge")
+    if served is not None:
+        result = served.show_candidate(candidate_id)
+        candidate = result.get("candidate")
+        if candidate is None:
+            raise click.ClickException(f"Candidate {candidate_id} not found.")
+        if output_json:
+            click.echo(json.dumps(result))
+            return
+        click.echo(json.dumps(result, indent=2))
+        return
     conn = obj["conn"]
+    try:
+        candidate_id = int(candidate_id)
+    except ValueError as exc:
+        raise click.UsageError("local candidate IDs must be integers") from exc
     c = _db.get_candidate(conn, candidate_id)
     if c is None:
         if output_json:
