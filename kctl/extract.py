@@ -23,17 +23,6 @@ DEFAULT_COORDINATION_EVENT_TYPES = {
 }
 DEFAULT_EVENT_TYPES = DEFAULT_DURABLE_EVENT_TYPES | DEFAULT_COORDINATION_EVENT_TYPES
 
-# This is intentionally a stable, machine-recognisable rejection. The served
-# catalog has no operation with the semantics of ``sprintctl maintain.check``;
-# composing it from other reads would duplicate direct-store policy in a client.
-SERVED_PREFLIGHT_UNAVAILABLE = (
-    "Preflight check failed: served-operation-unavailable: "
-    "Vuoro does not expose a maintain.check-equivalent diagnostic. "
-    "Record sprint health through the owning sprintctl workflow, then rerun "
-    "kctl extract with --no-preflight."
-)
-
-
 def get_sprintctl_db_path() -> Path:
     env = os.environ.get("SPRINTCTL_DB")
     if env:
@@ -341,9 +330,12 @@ def run_preflight_for_source(
         )
 
     if isinstance(source, ServedSprintctlSource):
-        # Fail before any alternate read/composition. A sprint lookup cannot
-        # establish the stale-item diagnostic and must not look partially safe.
-        return [SERVED_PREFLIGHT_UNAVAILABLE]
+        try:
+            report = source.maintain_check(sprint_id)
+        except Exception as exc:  # noqa: BLE001
+            return [f"Preflight check failed: {exc}"]
+        warning = _build_warning_from_report(report)
+        return [warning] if warning else []
 
     targets = source.list_preflight_targets(sprint_id)
     if sprint_id is not None and not targets:

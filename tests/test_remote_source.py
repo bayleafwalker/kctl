@@ -239,7 +239,7 @@ def test_served_source_lists_preflight_targets_through_read_sprints(monkeypatch)
     ]
 
 
-def test_served_preflight_fails_closed_without_composing_an_unserved_diagnostic(monkeypatch):
+def test_served_preflight_uses_owning_maintain_diagnostic_not_sprint_composition(monkeypatch):
     source = _source.ServedSprintctlSource(
         profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
         repo_id="source-repo",
@@ -249,8 +249,19 @@ def test_served_preflight_fails_closed_without_composing_an_unserved_diagnostic(
 
     monkeypatch.setattr(source, "list_preflight_targets", unexpected_target_lookup)
 
+    calls = []
+    def invoke(operation, arguments):
+        calls.append((operation, arguments))
+        return {
+            "repo_id": "source-repo",
+            "sprint": {"id": 7, "name": "Current"},
+            "stale_items": [],
+            "threshold_hours": 4,
+            "pending_threshold_hours": None,
+        }
+
+    monkeypatch.setattr(source, "_invoke", invoke)
     warnings = _extract.run_preflight_for_source(source, sprint_id=7)
 
-    assert warnings == [
-        _extract.SERVED_PREFLIGHT_UNAVAILABLE
-    ]
+    assert warnings == []
+    assert calls == [("work.maintain.check", {"sprint_id": 7})]

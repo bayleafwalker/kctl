@@ -211,32 +211,44 @@ def test_cli_preflight_json_runtime_failure_is_error(monkeypatch, sc_db_path, ru
     assert "Preflight check failed" in payload["error"]
 
 
-def test_cli_served_preflight_returns_stable_operation_unavailable_error(monkeypatch, runner):
+def test_cli_served_preflight_uses_owning_maintain_contract(monkeypatch, runner):
     source = _source.ServedSprintctlSource(
         profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
         repo_id="source-repo",
     )
     monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
+    monkeypatch.setattr(
+        source,
+        "maintain_check",
+        lambda sprint_id: {
+            "repo_id": "source-repo",
+            "sprint": {"id": sprint_id, "name": "Current"},
+            "stale_items": [],
+            "threshold_hours": 4,
+            "pending_threshold_hours": None,
+        },
+    )
 
     result = runner.invoke(cli, ["preflight", "--sprint-id", "7", "--json"])
 
-    assert result.exit_code != 0
+    assert result.exit_code == 0
     assert json.loads(result.output) == {
-        "ok": False,
+        "ok": True,
         "sprint_id": 7,
         "warnings": [],
-        "error": _extract.SERVED_PREFLIGHT_UNAVAILABLE,
+        "error": None,
     }
 
 
-def test_cli_served_extract_requires_explicit_no_preflight(monkeypatch, kctl_conn, runner):
+def test_cli_served_extract_preflight_failure_is_an_honest_served_error(monkeypatch, kctl_conn, runner):
     source = _source.ServedSprintctlSource(
         profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
         repo_id="source-repo",
     )
     monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
+    monkeypatch.setattr(source, "maintain_check", lambda _sprint_id: (_ for _ in ()).throw(RuntimeError("catalog unavailable")))
 
     result = runner.invoke(cli, ["extract", "--sprint-id", "7"])
 
     assert result.exit_code != 0
-    assert _extract.SERVED_PREFLIGHT_UNAVAILABLE in result.output
+    assert "Preflight check failed: catalog unavailable" in result.output

@@ -249,9 +249,9 @@ class ServedSprintctlSource:
             offset += len(events)
 
     def list_preflight_targets(self, sprint_id: int | None) -> list[dict[str, Any]]:
-        # ``work.read.sprints`` supplies the same target selection as the
-        # remote source. It does not, however, expose maintain.check itself;
-        # run_preflight_for_source reports that separately and explicitly.
+        # Retained for generic source inspection. Served preflight itself uses
+        # the owning ``work.maintain.check`` operation below rather than
+        # composing a diagnostic from these sprint rows.
         result = self._invoke(
             "work.read.sprints",
             {
@@ -272,6 +272,10 @@ class ServedSprintctlSource:
             for sprint in sprints
             if isinstance(sprint.get("id"), int)
         ]
+
+    def maintain_check(self, sprint_id: int | None) -> dict[str, Any]:
+        """Read Sprintctl's owning health diagnostic through Vuoro."""
+        return self._invoke("work.maintain.check", {"sprint_id": sprint_id})
 
     def close(self) -> None:
         # Every invocation owns and closes its short-lived async client.
