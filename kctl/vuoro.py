@@ -205,6 +205,7 @@ def _operation(
     semantics: str,
     idempotency: str,
     handler_name: str,
+    repo_scoped: bool = False,
 ) -> dict[str, Any]:
     return {
         "name": name,
@@ -214,6 +215,7 @@ def _operation(
         "required_authority": authority,
         "execution_semantics": semantics,
         "idempotency": idempotency,
+        "repo_scoped": repo_scoped,
         "deprecation": {
             "deprecated": False,
             "replacement": None,
@@ -237,6 +239,7 @@ _OPERATIONS = (
         semantics="write",
         idempotency="required",
         handler_name="intake_candidate",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.candidate.list",
@@ -265,10 +268,14 @@ _OPERATIONS = (
         semantics="read",
         idempotency="not-allowed",
         handler_name="list_candidates",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.candidate.show",
-        input_schema=_object({"candidate_id": _UUID}, required=("candidate_id",)),
+        input_schema=_object(
+            {"candidate_id": _UUID, "repo_id": _REPO_ID},
+            required=("candidate_id", "repo_id"),
+        ),
         result_schema=_object(
             {
                 "candidate": {"oneOf": [_CANDIDATE_SCHEMA, {"type": "null"}]},
@@ -280,12 +287,13 @@ _OPERATIONS = (
         semantics="read",
         idempotency="not-allowed",
         handler_name="show_candidate",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.candidate.approve",
         input_schema=_object(
-            {"candidate_id": _UUID, "notes": _NULLABLE_TEXT},
-            required=("candidate_id",),
+            {"candidate_id": _UUID, "repo_id": _REPO_ID, "notes": _NULLABLE_TEXT},
+            required=("candidate_id", "repo_id"),
         ),
         result_schema=_mutation_result(
             {"candidate": _CANDIDATE_SCHEMA, "review": _REVIEW_SCHEMA},
@@ -295,12 +303,13 @@ _OPERATIONS = (
         semantics="write",
         idempotency="required",
         handler_name="approve_candidate",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.candidate.reject",
         input_schema=_object(
-            {"candidate_id": _UUID, "reason": _NULLABLE_TEXT},
-            required=("candidate_id",),
+            {"candidate_id": _UUID, "repo_id": _REPO_ID, "reason": _NULLABLE_TEXT},
+            required=("candidate_id", "repo_id"),
         ),
         result_schema=_mutation_result(
             {"candidate": _CANDIDATE_SCHEMA, "review": _REVIEW_SCHEMA},
@@ -310,6 +319,7 @@ _OPERATIONS = (
         semantics="write",
         idempotency="required",
         handler_name="reject_candidate",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.publication-reference.record",
@@ -327,12 +337,13 @@ _OPERATIONS = (
         semantics="write",
         idempotency="required",
         handler_name="record_publication_reference",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.publication-reference.supersede",
         input_schema=_object(
-            {"predecessor_id": _UUID, "successor_id": _UUID},
-            required=("predecessor_id", "successor_id"),
+            {"predecessor_id": _UUID, "successor_id": _UUID, "repo_id": _REPO_ID},
+            required=("predecessor_id", "successor_id", "repo_id"),
         ),
         result_schema=_mutation_result(
             {
@@ -345,6 +356,7 @@ _OPERATIONS = (
         semantics="write",
         idempotency="required",
         handler_name="supersede_publication",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.publication-reference.list",
@@ -373,10 +385,14 @@ _OPERATIONS = (
         semantics="read",
         idempotency="not-allowed",
         handler_name="list_publications",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.publication-reference.show",
-        input_schema=_object({"publication_id": _UUID}, required=("publication_id",)),
+        input_schema=_object(
+            {"publication_id": _UUID, "repo_id": _REPO_ID},
+            required=("publication_id", "repo_id"),
+        ),
         result_schema=_object(
             {"publication": {"oneOf": [_PUBLICATION_SCHEMA, {"type": "null"}]}},
             required=("publication",),
@@ -385,6 +401,7 @@ _OPERATIONS = (
         semantics="read",
         idempotency="not-allowed",
         handler_name="show_publication",
+        repo_scoped=True,
     ),
     _operation(
         name="knowledge.schema.compatibility",
@@ -479,9 +496,22 @@ class VuoroKnowledgeAdapter:
         except SchemaCompatibilityError as error:
             self._reject("knowledge-schema-incompatible", str(error), 503)
 
+    def _require_repo(self, context: Any, repo_id: Any) -> str:
+        """Bind a record argument to the already-authorized envelope scope."""
+        if not isinstance(repo_id, str) or not repo_id:
+            self._reject("knowledge-repo-mismatch", "knowledge record has no repository scope", 403)
+        if getattr(context, "repo_id", None) != repo_id:
+            self._reject(
+                "knowledge-repo-mismatch",
+                "knowledge record repository does not match the authorized invocation scope",
+                403,
+            )
+        return repo_id
+
     def intake_candidate(
         self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        self._require_repo(context, arguments["candidate"].get("repo_id"))
         return self._call(
             lambda: self.application.intake_candidate(
                 arguments["candidate"], evidence=self._mutation_evidence(context)
@@ -489,11 +519,12 @@ class VuoroKnowledgeAdapter:
         )
 
     def list_candidates(
-        self, arguments: dict[str, Any], _context: Any
+        self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.list_candidates(
-                repo_id=arguments["repo_id"],
+                repo_id=repo_id,
                 status=arguments.get("status"),
                 candidate_kind=arguments.get("candidate_kind"),
                 limit=arguments.get("limit", 50),
@@ -501,39 +532,45 @@ class VuoroKnowledgeAdapter:
         )
 
     def show_candidate(
-        self, arguments: dict[str, Any], _context: Any
+        self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.show_candidate(
-                candidate_id=arguments["candidate_id"]
+                candidate_id=arguments["candidate_id"], repo_id=repo_id
             )
         )
 
     def approve_candidate(
         self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.approve_candidate(
                 candidate_id=arguments["candidate_id"],
                 notes=arguments.get("notes"),
                 evidence=self._mutation_evidence(context),
+                repo_id=repo_id,
             )
         )
 
     def reject_candidate(
         self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.reject_candidate(
                 candidate_id=arguments["candidate_id"],
                 reason=arguments.get("reason"),
                 evidence=self._mutation_evidence(context),
+                repo_id=repo_id,
             )
         )
 
     def record_publication_reference(
         self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        self._require_repo(context, arguments["publication"].get("repo_id"))
         return self._call(
             lambda: self.application.record_publication_reference(
                 arguments["publication"], evidence=self._mutation_evidence(context)
@@ -543,20 +580,23 @@ class VuoroKnowledgeAdapter:
     def supersede_publication(
         self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.supersede_publication(
                 predecessor_id=arguments["predecessor_id"],
                 successor_id=arguments["successor_id"],
                 evidence=self._mutation_evidence(context),
+                repo_id=repo_id,
             )
         )
 
     def list_publications(
-        self, arguments: dict[str, Any], _context: Any
+        self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.list_publications(
-                repo_id=arguments["repo_id"],
+                repo_id=repo_id,
                 category=arguments.get("category"),
                 source_kind=arguments.get("source_kind"),
                 limit=arguments.get("limit", 50),
@@ -564,11 +604,12 @@ class VuoroKnowledgeAdapter:
         )
 
     def show_publication(
-        self, arguments: dict[str, Any], _context: Any
+        self, arguments: dict[str, Any], context: Any
     ) -> dict[str, Any]:
+        repo_id = self._require_repo(context, arguments["repo_id"])
         return self._call(
             lambda: self.application.show_publication(
-                publication_id=arguments["publication_id"]
+                publication_id=arguments["publication_id"], repo_id=repo_id
             )
         )
 

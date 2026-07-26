@@ -5,6 +5,8 @@ import subprocess
 import sys
 from typing import Any
 
+import pytest
+
 from kctl.application import CentralKnowledgeApplication, MAX_READ_LIMIT
 from kctl.vuoro import (
     INTAKE_AUTHORITY,
@@ -111,6 +113,40 @@ def test_catalog_specs_are_fresh_data_and_handlers_register_without_vuoro() -> N
         spec["name"] for spec in catalog_operation_specs()
     ]
     assert all(callable(handler) for _definition, handler in registry.operations)
+
+
+def test_repository_bearing_operations_require_authorized_envelope_scope() -> None:
+    specs = {spec["name"]: spec for spec in catalog_operation_specs()}
+    assert specs["knowledge.schema.compatibility"]["repo_scoped"] is False
+    for name, spec in specs.items():
+        if name != "knowledge.schema.compatibility":
+            assert spec["repo_scoped"] is True
+
+    for name in (
+        "knowledge.candidate.show",
+        "knowledge.candidate.approve",
+        "knowledge.candidate.reject",
+        "knowledge.publication-reference.show",
+        "knowledge.publication-reference.supersede",
+    ):
+        assert "repo_id" in specs[name]["input_schema"]["required"]
+
+
+def test_adapter_rejects_argument_scope_mismatch_before_application_call() -> None:
+    class _Application:
+        def list_candidates(self, **_kwargs: Any) -> dict[str, Any]:
+            pytest.fail("cross-repository request reached the knowledge application")
+
+    def reject(code: str, message: str, status: int) -> BaseException:
+        return RuntimeError(f"{code}:{status}:{message}")
+
+    adapter = VuoroKnowledgeAdapter(_Application(), rejection_factory=reject)  # type: ignore[arg-type]
+    context = type("Context", (), {"repo_id": "agentops"})()
+    with pytest.raises(RuntimeError, match="knowledge-repo-mismatch:403"):
+        adapter.list_candidates(
+            {"repo_id": "another-repository", "status": None, "candidate_kind": None},
+            context,
+        )
 
 
 def test_legacy_cli_import_does_not_load_served_or_postgres_dependencies() -> None:

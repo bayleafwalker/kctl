@@ -481,10 +481,22 @@ class CentralKnowledgeApplication:
             candidates = [_row(value) for value in cur.fetchall()]
         return {"candidates": candidates, "count": len(candidates), "limit": limit}
 
-    def show_candidate(self, *, candidate_id: str) -> dict[str, Any]:
+    @staticmethod
+    def _require_repo(record: dict[str, Any] | None, repo_id: str, *, kind: str) -> None:
+        """Fail closed before exposing or mutating a cross-repository record."""
+        if record is not None and record["repo_id"] != repo_id:
+            # Deliberately use the normal not-found shape: a caller authorized
+            # for one repository must not learn that an unguessable central ID
+            # belongs to another repository.
+            raise KnowledgeNotFoundError(f"{kind} was not found")
+
+    def show_candidate(self, *, candidate_id: str, repo_id: str | None = None) -> dict[str, Any]:
         candidate_id = _uuid(candidate_id, "candidate_id")
+        expected_repo = _repo_id(repo_id) if repo_id is not None else None
         with self.connection() as conn, conn.cursor() as cur:
             candidate = self._candidate(cur, candidate_id)
+            if expected_repo is not None:
+                self._require_repo(candidate, expected_repo, kind="candidate")
             review = self._review(cur, candidate_id) if candidate is not None else None
         return {"candidate": candidate, "review": review}
 
@@ -495,8 +507,10 @@ class CentralKnowledgeApplication:
         decision: str,
         notes: str | None,
         evidence: MutationEvidence,
+        repo_id: str | None = None,
     ) -> dict[str, Any]:
         candidate_id = _uuid(candidate_id, "candidate_id")
+        expected_repo = _repo_id(repo_id) if repo_id is not None else None
         notes = _optional_text(notes, "review_notes")
         if decision not in {"approved", "rejected"}:
             raise KnowledgeInputError("decision is unsupported")
@@ -507,6 +521,8 @@ class CentralKnowledgeApplication:
                     raise KnowledgeNotFoundError(
                         f"candidate {candidate_id} was not found"
                     )
+                if expected_repo is not None:
+                    self._require_repo(candidate, expected_repo, kind="candidate")
                 _evidence(evidence, expected_basis=candidate["basis_git_revision"])
                 existing = self._review(cur, candidate_id)
                 if existing is not None:
@@ -573,12 +589,14 @@ class CentralKnowledgeApplication:
         candidate_id: str,
         notes: str | None = None,
         evidence: MutationEvidence,
+        repo_id: str | None = None,
     ) -> dict[str, Any]:
         return self._review_candidate(
             candidate_id=candidate_id,
             decision="approved",
             notes=notes,
             evidence=evidence,
+            repo_id=repo_id,
         )
 
     def reject_candidate(
@@ -587,12 +605,14 @@ class CentralKnowledgeApplication:
         candidate_id: str,
         reason: str | None = None,
         evidence: MutationEvidence,
+        repo_id: str | None = None,
     ) -> dict[str, Any]:
         return self._review_candidate(
             candidate_id=candidate_id,
             decision="rejected",
             notes=reason,
             evidence=evidence,
+            repo_id=repo_id,
         )
 
     def record_publication_reference(
@@ -807,9 +827,11 @@ class CentralKnowledgeApplication:
         predecessor_id: str,
         successor_id: str,
         evidence: MutationEvidence,
+        repo_id: str | None = None,
     ) -> dict[str, Any]:
         predecessor_id = _uuid(predecessor_id, "predecessor_id")
         successor_id = _uuid(successor_id, "successor_id")
+        expected_repo = _repo_id(repo_id) if repo_id is not None else None
         if predecessor_id == successor_id:
             raise KnowledgeInputError("a publication cannot supersede itself")
         with self.connection() as conn, conn.transaction():
@@ -817,6 +839,8 @@ class CentralKnowledgeApplication:
                 successor = self._publication(cur, successor_id)
                 if successor is None:
                     raise KnowledgeNotFoundError("successor publication was not found")
+                if expected_repo is not None:
+                    self._require_repo(successor, expected_repo, kind="publication")
                 _evidence(evidence, expected_basis=successor["git_revision"])
                 cur.execute(
                     "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
@@ -871,10 +895,15 @@ class CentralKnowledgeApplication:
             "limit": limit,
         }
 
-    def show_publication(self, *, publication_id: str) -> dict[str, Any]:
+    def show_publication(
+        self, *, publication_id: str, repo_id: str | None = None
+    ) -> dict[str, Any]:
         publication_id = _uuid(publication_id, "publication_id")
+        expected_repo = _repo_id(repo_id) if repo_id is not None else None
         with self.connection() as conn, conn.cursor() as cur:
             publication = self._publication(cur, publication_id)
+            if expected_repo is not None:
+                self._require_repo(publication, expected_repo, kind="publication")
         return {"publication": publication}
 
 
