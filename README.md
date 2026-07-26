@@ -147,6 +147,21 @@ the kctl database. The repo ID defaults to the current repository; set
 `KCTL_SPRINTCTL_REPO_ID` or pass `--sprintctl-repo-id` when reading another
 repository.
 
+For a served sprintctl source, install `kctl[served]` on Python 3.12+ and set
+`SPRINTCTL_BACKEND=served` plus `SPRINTCTL_VUORO_PROFILE` to the same
+`vuoro-client-profile/v1` profile used by sprintctl. kctl invokes
+`work.read.events` directly through `vuoro-client`; it never shells out to
+the sprintctl CLI or opens its database. Served extraction requires an
+explicit `--sprint-id`, because the catalog's event read is sprint-scoped.
+Its watermark is keyed as `served://<repo_id>` and uses durable event IDs;
+the ordinal served pagination cursor is never persisted as that watermark.
+
+The catalog currently lacks a read-only equivalent to `maintain.check`.
+Consequently a served `kctl preflight` (and the default extract preflight)
+reports that unsupported diagnostic explicitly rather than reporting a clean
+result. Use `kctl extract --sprint-id ID --no-preflight` only after recording
+the applicable sprint health evidence through the owning sprintctl workflow.
+
 If `KCTL_EVENT_TYPES` is unset, kctl extracts these defaults:
 
 - durable: `decision`, `blocker-resolved`, `pattern-noted`, `risk-accepted`, `lesson-learned`

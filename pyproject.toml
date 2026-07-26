@@ -14,6 +14,11 @@ kctl = "kctl.cli:cli"
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 remote = ["psycopg[binary]>=3.1"]
+# Keep this aligned with sprintctl's served client pin until vuoro-client has
+# a release tag. This revision first carried repo_id in invocation envelopes.
+served = [
+    "vuoro-client @ git+https://github.com/bayleafwalker/vuoro.git@1cce813b9f473c9fd15439fd0e771ec0c0b74db0#subdirectory=packages/vuoro-client ; python_version >= '3.12'",
+]
 
 [tool.setuptools]
 packages = ["kctl"]

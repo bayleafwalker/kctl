@@ -12,7 +12,9 @@ kctl reads sprintctl events without mutating sprintctl. Its authoritative state 
 
 ## Extraction
 
-Extraction is scoped by sprint ID and the effective event-type set. Each scope has an independent watermark. A candidate is uniquely keyed by the sprintctl source event ID. The source may be a local SQLite database or a tenant-scoped remote PostgreSQL read connection; remote watermark keys identify the repository as `remote://<repo_id>` and never persist its connection URL.
+Extraction is scoped by sprint ID and the effective event-type set. Each scope has an independent watermark. A candidate is uniquely keyed by the sprintctl source event ID. The source may be a local SQLite database, a tenant-scoped remote PostgreSQL read connection, or a served Vuoro read client. Remote watermark keys identify the repository as `remote://<repo_id>` and never persist its connection URL. Served watermark keys identify the same repository as `served://<repo_id>` and never persist a profile endpoint or credential reference.
+
+For extraction, the served source invokes only the authenticated `work.read.events` catalog operation through `vuoro-client`; it does not invoke the sprintctl CLI or open a sprintctl database. That operation is sprint-scoped and paginates with an ordinal `after_offset`, while the extraction watermark remains the durable source event ID. A served extraction therefore pages from ordinal zero and locally selects event IDs greater than its durable watermark. It must not store or compare an ordinal cursor as an event-ID watermark. Preflight target lookup separately uses `work.read.sprints`; because the catalog has no `maintain.check` equivalent, it reports that diagnostic as unsupported rather than treating the lookup as a clean preflight.
 
 The implementation may commit candidate rows before committing the new watermark. After interruption, rerunning the same scope can revisit events; duplicate candidate inserts are ignored by the source-event uniqueness constraint. This provides restartable at-least-once scanning with an at-most-one stored candidate per source event.
 
@@ -55,7 +57,8 @@ its status, never as a side effect of exporting or reading the artifact.
 ## Safety properties
 
 - One source event produces at most one stored candidate.
-- Extraction watermarks are isolated by source database and scope key.
+- Extraction watermarks are isolated by source identity and scope key. A served
+  ordinal cursor is never a watermark.
 - Candidate status follows only the declared transition graph.
 - Only approved candidates are eligible for publication.
 - A supersession target exists and cannot be the new entry itself.
@@ -66,7 +69,7 @@ its status, never as a side effect of exporting or reading the artifact.
 ## Liveness and recovery
 
 - No concurrent-writer progress or fairness guarantee is made.
-- Extraction progresses when invoked and the source database remains readable. Remote extraction uses a transaction-default read-only connection and never bootstraps or writes sprintctl schema or state.
+- Extraction progresses when invoked and the source remains readable. Remote extraction uses a transaction-default read-only connection and never bootstraps or writes sprintctl schema or state. Served extraction invokes only the read catalog operation above and likewise never writes sprintctl state.
 - Partial extraction converges on rerun through source-event deduplication.
 - Partial publication requires explicit reconciliation; blind retry is unsafe.
 - An interrupted artifact export preserves either the previous complete

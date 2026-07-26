@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import db as _db
-from .source import LocalSprintctlSource, RemoteSprintctlSource
+from .source import LocalSprintctlSource, RemoteSprintctlSource, ServedSprintctlSource
 
 DEFAULT_DURABLE_EVENT_TYPES = {
     "decision",
@@ -318,7 +318,7 @@ def run_preflight(
 
 
 def run_preflight_for_source(
-    source: LocalSprintctlSource | RemoteSprintctlSource,
+    source: LocalSprintctlSource | RemoteSprintctlSource | ServedSprintctlSource,
     *,
     sprint_id: int | None = None,
 ) -> list[str]:
@@ -333,6 +333,14 @@ def run_preflight_for_source(
     targets = source.list_preflight_targets(sprint_id)
     if sprint_id is not None and not targets:
         return [f"Preflight check failed: Sprint #{sprint_id} not found"]
+    if isinstance(source, ServedSprintctlSource):
+        # The served catalog can list the sprint targets, but it deliberately
+        # has no operation semantically equivalent to sprintctl.maintain.check.
+        # Do not report an unperformed diagnostic as a clean preflight.
+        return [
+            "Preflight check failed: served sprintctl does not expose a "
+            "maintain.check-equivalent diagnostic."
+        ]
     try:
         # Reuse sprintctl's diagnostic logic, but deliberately do not call its
         # CLI or init_db: either can bootstrap the remote schema. The source

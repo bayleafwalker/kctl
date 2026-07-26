@@ -1,3 +1,6 @@
+import json
+import sys
+import types
 from datetime import datetime, timezone
 
 import pytest
@@ -83,3 +86,168 @@ def test_remote_source_requires_url(monkeypatch):
 
     with pytest.raises(_source.SprintctlSourceError, match="requires SPRINTCTL_URL"):
         _source.open_sprintctl_source(remote_repo_id="source-repo")
+
+
+def test_served_source_paginates_then_filters_with_durable_event_id_watermark(monkeypatch):
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+    first_page = [
+        {
+            "id": event_id,
+            "event_type": "decision",
+            "payload": {"summary": f"event-{event_id}"},
+            "created_at": "2026-07-26T12:00:00Z",
+        }
+        for event_id in range(1, 101)
+    ]
+    second_page = [
+        {
+            "id": 101,
+            "event_type": "pattern-noted",
+            "payload": {"summary": "new"},
+            "created_at": "2026-07-26T12:01:00Z",
+        },
+        {
+            "id": 102,
+            "event_type": "ignored",
+            "payload": {"summary": "skip"},
+            "created_at": "2026-07-26T12:02:00Z",
+        },
+    ]
+    calls = []
+
+    def invoke(_operation, arguments):
+        calls.append(arguments)
+        return {"repo_id": "source-repo", "events": first_page if arguments["after_offset"] == 0 else second_page}
+
+    monkeypatch.setattr(source, "_invoke", invoke)
+
+    events = source.fetch_events(
+        since_event_id=99,
+        event_types={"decision", "pattern-noted"},
+        sprint_id=7,
+    )
+
+    assert [event["id"] for event in events] == [100, 101]
+    assert events[0]["payload"] == '{"summary": "event-100"}'
+    assert calls == [
+        {"sprint_id": 7, "work_item_id": None, "after_offset": 0, "limit": 100},
+        {"sprint_id": 7, "work_item_id": None, "after_offset": 100, "limit": 100},
+    ]
+
+
+def test_served_source_requires_sprint_scope():
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+
+    with pytest.raises(_source.SprintctlSourceError, match="requires --sprint-id"):
+        source.fetch_events(since_event_id=0, event_types={"decision"}, sprint_id=None)
+
+
+def test_served_source_invokes_vuoro_client_with_repository_scope(monkeypatch):
+    invocations = []
+
+    class _Profile:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    class _Client:
+        def __init__(self, profile, credential_resolver):
+            self.profile = profile
+            self.credential_resolver = credential_resolver
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def invoke(self, operation, arguments, **kwargs):
+            invocations.append((operation, arguments, kwargs, self.profile))
+            return {"repo_id": "source-repo", "events": []}
+
+    monkeypatch.setitem(sys.modules, "vuoro_client", types.SimpleNamespace(AsyncVuoroClient=_Client, Profile=_Profile))
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+
+    result = source._invoke("work.read.events", {"sprint_id": 7})
+
+    assert result == {"repo_id": "source-repo", "events": []}
+    assert invocations[0][:3] == (
+        "work.read.events",
+        {"sprint_id": 7},
+        {"repo_id": "source-repo"},
+    )
+    assert invocations[0][3].expected_environment == "vuoro-dev"
+
+
+def test_open_served_source_resolves_vuoro_profile(monkeypatch, tmp_path):
+    profile = tmp_path / "vuoro-profile.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "schema_version": "vuoro-client-profile/v1",
+                "id": "vuoro-dev",
+                "target": {"endpoint": "https://vuoro.example/", "environment_id": "vuoro-dev"},
+                "credential_ref": "file:/tmp/vuoro-token",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setenv("SPRINTCTL_VUORO_PROFILE", str(profile))
+    monkeypatch.delenv("SPRINTCTL_URL", raising=False)
+
+    source = _source.open_sprintctl_source(remote_repo_id="source-repo")
+
+    assert isinstance(source, _source.ServedSprintctlSource)
+    assert source.source_id == "served://source-repo"
+    assert source.profile.endpoint == "https://vuoro.example/"
+
+
+def test_served_source_lists_preflight_targets_through_read_sprints(monkeypatch):
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+    calls = []
+
+    def invoke(operation, arguments):
+        calls.append((operation, arguments))
+        return {
+            "repo_id": "source-repo",
+            "sprints": [
+                {"id": 7, "name": "Current", "status": "active"},
+                {"id": 8, "name": "Closed", "status": "closed"},
+            ],
+        }
+
+    monkeypatch.setattr(source, "_invoke", invoke)
+
+    assert source.list_preflight_targets(7) == [{"id": 7, "name": "Current", "status": "active"}]
+    assert calls == [
+        (
+            "work.read.sprints",
+            {"include_backlog": True, "include_archive": True, "active_only": False},
+        )
+    ]
+
+
+def test_served_preflight_explicitly_reports_missing_maintain_operation(monkeypatch):
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+    monkeypatch.setattr(source, "list_preflight_targets", lambda _sprint_id: [{"id": 7}])
+
+    warnings = _extract.run_preflight_for_source(source, sprint_id=7)
+
+    assert warnings == [
+        "Preflight check failed: served sprintctl does not expose a maintain.check-equivalent diagnostic."
+    ]
