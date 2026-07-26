@@ -206,6 +206,10 @@ def extract_cmd(obj, sprint_id, full, event_types, sprintctl_db, sprintctl_repo_
             )
             for w in warnings:
                 click.echo(f"Warning: {w}", err=True)
+            if any(warning.startswith("Preflight check failed:") for warning in warnings):
+                # A diagnostic failure is not a stale-item warning. Continue
+                # only when the caller explicitly accepts --no-preflight.
+                sys.exit(1)
 
         try:
             event_type_set = _extract.resolve_event_types(event_types)

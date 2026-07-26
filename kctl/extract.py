@@ -23,6 +23,16 @@ DEFAULT_COORDINATION_EVENT_TYPES = {
 }
 DEFAULT_EVENT_TYPES = DEFAULT_DURABLE_EVENT_TYPES | DEFAULT_COORDINATION_EVENT_TYPES
 
+# This is intentionally a stable, machine-recognisable rejection. The served
+# catalog has no operation with the semantics of ``sprintctl maintain.check``;
+# composing it from other reads would duplicate direct-store policy in a client.
+SERVED_PREFLIGHT_UNAVAILABLE = (
+    "Preflight check failed: served-operation-unavailable: "
+    "Vuoro does not expose a maintain.check-equivalent diagnostic. "
+    "Record sprint health through the owning sprintctl workflow, then rerun "
+    "kctl extract with --no-preflight."
+)
+
 
 def get_sprintctl_db_path() -> Path:
     env = os.environ.get("SPRINTCTL_DB")
@@ -330,17 +340,14 @@ def run_preflight_for_source(
             sprintctl_db_path=source.path,
         )
 
+    if isinstance(source, ServedSprintctlSource):
+        # Fail before any alternate read/composition. A sprint lookup cannot
+        # establish the stale-item diagnostic and must not look partially safe.
+        return [SERVED_PREFLIGHT_UNAVAILABLE]
+
     targets = source.list_preflight_targets(sprint_id)
     if sprint_id is not None and not targets:
         return [f"Preflight check failed: Sprint #{sprint_id} not found"]
-    if isinstance(source, ServedSprintctlSource):
-        # The served catalog can list the sprint targets, but it deliberately
-        # has no operation semantically equivalent to sprintctl.maintain.check.
-        # Do not report an unperformed diagnostic as a clean preflight.
-        return [
-            "Preflight check failed: served sprintctl does not expose a "
-            "maintain.check-equivalent diagnostic."
-        ]
     try:
         # Reuse sprintctl's diagnostic logic, but deliberately do not call its
         # CLI or init_db: either can bootstrap the remote schema. The source

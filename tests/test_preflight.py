@@ -7,6 +7,7 @@ import pytest
 
 from kctl import db as _db
 from kctl import extract as _extract
+from kctl import source as _source
 from kctl.cli import cli
 
 
@@ -208,3 +209,34 @@ def test_cli_preflight_json_runtime_failure_is_error(monkeypatch, sc_db_path, ru
     assert payload["ok"] is False
     assert payload["warnings"] == []
     assert "Preflight check failed" in payload["error"]
+
+
+def test_cli_served_preflight_returns_stable_operation_unavailable_error(monkeypatch, runner):
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+    monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
+
+    result = runner.invoke(cli, ["preflight", "--sprint-id", "7", "--json"])
+
+    assert result.exit_code != 0
+    assert json.loads(result.output) == {
+        "ok": False,
+        "sprint_id": 7,
+        "warnings": [],
+        "error": _extract.SERVED_PREFLIGHT_UNAVAILABLE,
+    }
+
+
+def test_cli_served_extract_requires_explicit_no_preflight(monkeypatch, kctl_conn, runner):
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
+        repo_id="source-repo",
+    )
+    monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
+
+    result = runner.invoke(cli, ["extract", "--sprint-id", "7"])
+
+    assert result.exit_code != 0
+    assert _extract.SERVED_PREFLIGHT_UNAVAILABLE in result.output

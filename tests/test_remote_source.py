@@ -239,15 +239,18 @@ def test_served_source_lists_preflight_targets_through_read_sprints(monkeypatch)
     ]
 
 
-def test_served_preflight_explicitly_reports_missing_maintain_operation(monkeypatch):
+def test_served_preflight_fails_closed_without_composing_an_unserved_diagnostic(monkeypatch):
     source = _source.ServedSprintctlSource(
         profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),
         repo_id="source-repo",
     )
-    monkeypatch.setattr(source, "list_preflight_targets", lambda _sprint_id: [{"id": 7}])
+    def unexpected_target_lookup(_sprint_id):
+        pytest.fail("served preflight must not compose maintain.check from sprint reads")
+
+    monkeypatch.setattr(source, "list_preflight_targets", unexpected_target_lookup)
 
     warnings = _extract.run_preflight_for_source(source, sprint_id=7)
 
     assert warnings == [
-        "Preflight check failed: served sprintctl does not expose a maintain.check-equivalent diagnostic."
+        _extract.SERVED_PREFLIGHT_UNAVAILABLE
     ]

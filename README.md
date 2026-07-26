@@ -157,10 +157,11 @@ Its watermark is keyed as `served://<repo_id>` and uses durable event IDs;
 the ordinal served pagination cursor is never persisted as that watermark.
 
 The catalog currently lacks a read-only equivalent to `maintain.check`.
-Consequently a served `kctl preflight` (and the default extract preflight)
-reports that unsupported diagnostic explicitly rather than reporting a clean
-result. Use `kctl extract --sprint-id ID --no-preflight` only after recording
-the applicable sprint health evidence through the owning sprintctl workflow.
+Consequently served `kctl preflight` fails closed with the stable
+`served-operation-unavailable` error rather than reporting a clean or partial
+result. The default served extract preflight also stops; use
+`kctl extract --sprint-id ID --no-preflight` only after recording the
+applicable sprint health evidence through the owning sprintctl workflow.
 
 If `KCTL_EVENT_TYPES` is unset, kctl extracts these defaults:
 
@@ -368,7 +369,7 @@ kctl preflight --json
 
 Runs sprintctl's own stale-item diagnostics and reports warnings before extraction. This follows sprintctl's current semantics, including `SPRINTCTL_STALE_THRESHOLD` and `SPRINTCTL_PENDING_STALE_THRESHOLD`, instead of maintaining a separate SQL shadow in kctl.
 
-`kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Warnings do not block extraction.
+`kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Stale-item warnings do not block extraction, but a preflight runtime failure (including the served `served-operation-unavailable` result) does; explicitly pass `--no-preflight` only after recording the applicable health evidence.
 `kctl preflight --json` emits a structured payload with:
 - `ok` (boolean)
 - `sprint_id`
