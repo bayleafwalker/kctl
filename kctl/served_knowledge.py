@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from .source import ServedProfile, SprintctlSourceError, _resolve_file_credential
 
@@ -19,7 +20,7 @@ class ServedKnowledgeClient:
     profile: ServedProfile
     repo_id: str
 
-    def _invoke(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def _invoke(self, operation: str, arguments: dict[str, Any], *, basis_revision: str | None = None, idempotency_key: str | None = None) -> dict[str, Any]:
         try:
             from vuoro_client import AsyncVuoroClient, Profile  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -35,7 +36,12 @@ class ServedKnowledgeClient:
                 expected_environment=self.profile.expected_environment,
             )
             async with AsyncVuoroClient(profile, _resolve_file_credential) as client:
-                return await client.invoke(operation, arguments, repo_id=self.repo_id)
+                kwargs: dict[str, Any] = {"repo_id": self.repo_id}
+                if basis_revision is not None:
+                    kwargs["basis_revision"] = basis_revision
+                if idempotency_key is not None:
+                    kwargs["idempotency_key"] = idempotency_key
+                return await client.invoke(operation, arguments, **kwargs)
 
         try:
             result = asyncio.run(invoke())
@@ -62,6 +68,16 @@ class ServedKnowledgeClient:
             "knowledge.candidate.show", {"repo_id": self.repo_id, "candidate_id": candidate_id}
         )
 
+    def review_candidate(self, candidate_id: str, *, decision: str, note: str | None, basis_revision: str) -> dict[str, Any]:
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        return self._invoke(
+            f"knowledge.candidate.{decision}",
+            {"repo_id": self.repo_id, "candidate_id": candidate_id, "notes" if decision == "approve" else "reason": note},
+            basis_revision=basis_revision,
+            idempotency_key=str(uuid4()),
+        )
+
     def list_publications(
         self, *, category: str | None = None, source_kind: str | None = None, limit: int = 50
     ) -> dict[str, Any]:
@@ -69,4 +85,3 @@ class ServedKnowledgeClient:
             "knowledge.publication-reference.list",
             {"repo_id": self.repo_id, "category": category, "source_kind": source_kind, "limit": limit},
         )
-

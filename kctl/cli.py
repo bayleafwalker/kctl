@@ -411,7 +411,7 @@ def review_show(obj, candidate_id, output_json) -> None:
 
 
 @review_group.command("approve")
-@click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID")
+@click.option("--id", "candidate_id", type=str, required=True, help="Candidate ID (UUID in served mode)")
 @click.option("--title", default=None, help="Override summary/title")
 @click.option("--detail", default=None, help="Override detail/body draft")
 @click.option("--tags", default=None, help='Override tags as JSON array, e.g. \'["auth","lessons"]\'')
@@ -419,7 +419,22 @@ def review_show(obj, candidate_id, output_json) -> None:
 @click.pass_obj
 def review_approve(obj, candidate_id, title, detail, tags, reviewer) -> None:
     """Approve a candidate."""
+    served = obj.get("served_knowledge")
+    if served is not None:
+        if title is not None or detail is not None or tags is not None:
+            raise click.UsageError("--title, --detail, and --tags are local-only; served approval accepts the immutable candidate and optional notes")
+        shown = served.show_candidate(str(candidate_id))
+        candidate = shown.get("candidate")
+        if candidate is None:
+            raise click.ClickException(f"Candidate {candidate_id} not found.")
+        served.review_candidate(str(candidate_id), decision="approve", note=None, basis_revision=candidate["basis_git_revision"])
+        click.echo(f"Candidate {candidate_id} approved.")
+        return
     conn = obj["conn"]
+    try:
+        candidate_id = int(candidate_id)
+    except ValueError as exc:
+        raise click.UsageError("local candidate IDs must be integers") from exc
     try:
         updated = _review.approve_candidate(
             conn, candidate_id=candidate_id, now=_now(),
@@ -434,13 +449,26 @@ def review_approve(obj, candidate_id, title, detail, tags, reviewer) -> None:
 
 
 @review_group.command("reject")
-@click.option("--id", "candidate_id", type=int, required=True, help="Candidate ID")
+@click.option("--id", "candidate_id", type=str, required=True, help="Candidate ID (UUID in served mode)")
 @click.option("--reason", default=None, help="Reason for rejection")
 @click.option("--reviewer", default="human", help="Reviewer identifier")
 @click.pass_obj
 def review_reject(obj, candidate_id, reason, reviewer) -> None:
     """Reject a candidate."""
+    served = obj.get("served_knowledge")
+    if served is not None:
+        shown = served.show_candidate(str(candidate_id))
+        candidate = shown.get("candidate")
+        if candidate is None:
+            raise click.ClickException(f"Candidate {candidate_id} not found.")
+        served.review_candidate(str(candidate_id), decision="reject", note=reason, basis_revision=candidate["basis_git_revision"])
+        click.echo(f"Candidate {candidate_id} rejected.")
+        return
     conn = obj["conn"]
+    try:
+        candidate_id = int(candidate_id)
+    except ValueError as exc:
+        raise click.UsageError("local candidate IDs must be integers") from exc
     try:
         _review.reject_candidate(
             conn, candidate_id=candidate_id, now=_now(),
