@@ -188,6 +188,8 @@ def test_served_source_invokes_vuoro_client_with_repository_scope(monkeypatch):
 
 
 def test_open_served_source_resolves_vuoro_profile(monkeypatch, tmp_path):
+    if sys.version_info < (3, 12):
+        pytest.skip("served client support requires Python 3.12+")
     profile = tmp_path / "vuoro-profile.json"
     profile.write_text(
         json.dumps(

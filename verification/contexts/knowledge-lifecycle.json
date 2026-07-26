@@ -5,7 +5,7 @@
   "subject": "knowledge-candidate-and-entry",
   "contract_ref": {
     "doc_id": "kctl.knowledge-lifecycle",
-    "revision": "sha256:51fd3f475b02a75e4e6565238c5fd59eadffb3760f8e993cc66db36d0f65b5b3"
+    "revision": "sha256:ac40e710969cb4ead77955c3ae3fa77f710274b6dafbba19a4bc32f5debb69fe"
   },
   "source_of_truth": "sqlite-knowledge-store",
   "depth": 1,
