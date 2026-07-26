@@ -151,7 +151,7 @@ def _entry_json(e: dict) -> dict:
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
     # Served review reads must never bootstrap/open the local knowledge store.
-    if os.environ.get("SPRINTCTL_BACKEND", "local").lower() == "served" and ctx.invoked_subcommand == "review":
+    if os.environ.get("SPRINTCTL_BACKEND", "local").lower() == "served" and ctx.invoked_subcommand in {"review", "status"}:
         try:
             source = _source.open_sprintctl_source()
         except _source.SprintctlSourceError as exc:
@@ -749,6 +749,24 @@ def export_proposal_cmd(obj, artifacts_root, repo_id, suggested_owner_repo) -> N
 @click.pass_obj
 def status_cmd(obj, sprint_id, kind, output_json) -> None:
     """Show pipeline state: candidates awaiting review, approved, published."""
+    served = obj.get("served_knowledge")
+    if served is not None:
+        if sprint_id is not None:
+            raise click.UsageError("--sprint-id is not available for served status")
+        kinds = [kind] if kind != "all" else ["durable", "coordination"]
+        grouped = {
+            candidate_kind: {
+                status: served.list_candidates(status=status, candidate_kind=candidate_kind)["candidates"]
+                for status in ("candidate", "approved", "published")
+            }
+            for candidate_kind in kinds
+        }
+        if output_json:
+            click.echo(json.dumps(grouped))
+        else:
+            for candidate_kind, states in grouped.items():
+                click.echo(f"{candidate_kind}: {len(states['candidate'])} pending, {len(states['approved'])} approved, {len(states['published'])} published")
+        return
     conn = obj["conn"]
 
     def _counts_for(candidate_kind: str | None) -> dict:
