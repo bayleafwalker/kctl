@@ -240,6 +240,98 @@ def test_cli_served_preflight_uses_owning_maintain_contract(monkeypatch, runner)
     }
 
 
+def test_cli_served_preflight_never_opens_local_knowledge_store(monkeypatch, runner):
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setattr(
+        _db,
+        "get_connection",
+        lambda *_args, **_kwargs: pytest.fail("served preflight opened Kctl SQLite"),
+    )
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile(
+            "vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"
+        ),
+        repo_id="source-repo",
+    )
+    monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
+    monkeypatch.setattr(
+        source,
+        "maintain_check",
+        lambda sprint_id: {
+            "repo_id": "source-repo",
+            "sprint": {"id": sprint_id, "name": "Current"},
+            "stale_items": [],
+            "threshold_hours": 4,
+            "pending_threshold_hours": None,
+        },
+    )
+
+    result = runner.invoke(cli, ["preflight", "--sprint-id", "7", "--json"])
+
+    assert result.exit_code == 0, result.output
+
+
+def test_cli_served_doctor_probes_maintain_contract_without_sqlite(monkeypatch, runner):
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setattr(
+        _db,
+        "get_connection",
+        lambda *_args, **_kwargs: pytest.fail("served doctor opened Kctl SQLite"),
+    )
+    source = _source.ServedSprintctlSource(
+        profile=_source.ServedProfile(
+            "vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"
+        ),
+        repo_id="source-repo",
+    )
+    monkeypatch.setattr(_source, "open_sprintctl_source", lambda **_kwargs: source)
+    calls = []
+
+    def maintain_check(sprint_id):
+        calls.append(sprint_id)
+        return {
+            "repo_id": "source-repo",
+            "sprint": {"id": sprint_id, "name": "Current"},
+            "stale_items": [],
+            "threshold_hours": 4,
+            "pending_threshold_hours": None,
+        }
+
+    monkeypatch.setattr(source, "maintain_check", maintain_check)
+
+    result = runner.invoke(cli, ["doctor", "--sprint-id", "7", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [7]
+    assert json.loads(result.output) == {
+        "ok": True,
+        "mode": "served",
+        "source_id": "served://source-repo",
+        "maintain_check": {
+            "available": True,
+            "sprint_id": 7,
+            "warnings": [],
+            "error": None,
+        },
+    }
+
+
+@pytest.mark.parametrize("command", ["publish", "render", "export", "export-proposal"])
+def test_cli_served_unavailable_commands_fail_before_sqlite(monkeypatch, runner, command):
+    monkeypatch.setenv("SPRINTCTL_BACKEND", "served")
+    monkeypatch.setattr(
+        _db,
+        "get_connection",
+        lambda *_args, **_kwargs: pytest.fail("unavailable served command opened Kctl SQLite"),
+    )
+
+    result = runner.invoke(cli, [command])
+
+    assert result.exit_code != 0
+    assert "served-operation-unavailable" in result.output
+    assert "will not fall back to the local knowledge store" in result.output
+
+
 def test_cli_served_extract_preflight_failure_is_an_honest_served_error(monkeypatch, kctl_conn, runner):
     source = _source.ServedSprintctlSource(
         profile=_source.ServedProfile("vuoro-dev", "https://vuoro.example/", "file:/token", "vuoro-dev"),

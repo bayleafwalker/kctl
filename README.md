@@ -156,12 +156,12 @@ explicit `--sprint-id`, because the catalog's event read is sprint-scoped.
 Its watermark is keyed as `served://<repo_id>` and uses durable event IDs;
 the ordinal served pagination cursor is never persisted as that watermark.
 
-The catalog currently lacks a read-only equivalent to `maintain.check`.
-Consequently served `kctl preflight` fails closed with the stable
-`served-operation-unavailable` error rather than reporting a clean or partial
-result. The default served extract preflight also stops; use
-`kctl extract --sprint-id ID --no-preflight` only after recording the
-applicable sprint health evidence through the owning sprintctl workflow.
+Served `kctl preflight` and `kctl doctor` invoke Sprintctl's owning
+`work.maintain.check` catalog aggregate. They never reconstruct the diagnostic
+from partial sprint reads and never open either Kctl SQLite or a direct
+Sprintctl store. If an older deployed catalog lacks the operation, both fail
+visibly and extraction stops; use `--no-preflight` only after recording the
+applicable sprint health evidence through the owning Sprintctl workflow.
 
 If `KCTL_EVENT_TYPES` is unset, kctl extracts these defaults:
 
@@ -365,11 +365,12 @@ kctl preflight
 kctl preflight --sprint-id 1
 kctl preflight --sprintctl-db /path/to/sprint.db
 kctl preflight --json
+kctl doctor --sprint-id 1 --json
 ```
 
 Runs sprintctl's own stale-item diagnostics and reports warnings before extraction. This follows sprintctl's current semantics, including `SPRINTCTL_STALE_THRESHOLD` and `SPRINTCTL_PENDING_STALE_THRESHOLD`, instead of maintaining a separate SQL shadow in kctl.
 
-`kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Stale-item warnings do not block extraction, but a preflight runtime failure (including the served `served-operation-unavailable` result) does; explicitly pass `--no-preflight` only after recording the applicable health evidence.
+`kctl extract` runs preflight automatically unless `--no-preflight` is supplied. Stale-item warnings do not block extraction, but a preflight runtime failure (including a deployed catalog missing `work.maintain.check`) does; explicitly pass `--no-preflight` only after recording the applicable health evidence.
 `kctl preflight --json` emits a structured payload with:
 - `ok` (boolean)
 - `sprint_id`
@@ -377,6 +378,13 @@ Runs sprintctl's own stale-item diagnostics and reports warnings before extracti
 - `error` (`null` on success/warnings; string on hard failures such as missing DB/schema mismatch or preflight runtime failure)
 
 When a hard preflight failure occurs, `warnings` is returned as an empty array and the failure is reported in `error`.
+
+`kctl doctor --json` reports the selected backend/source identity and a
+`maintain_check` object with availability, scope, warnings, and any hard
+failure. In served mode it is a source-only preflight: it does not initialize
+the local knowledge store. Other top-level commands are explicitly classified;
+publication, render, and export remain unavailable in served mode and fail with
+`served-operation-unavailable` rather than falling back to SQLite.
 
 ## Architecture
 

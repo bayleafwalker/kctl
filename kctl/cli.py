@@ -16,6 +16,19 @@ from . import source as _source
 from .served_knowledge import ServedKnowledgeClient
 
 
+SERVED_COMMAND_DISPOSITIONS = {
+    "doctor": "source",
+    "extract": "knowledge",
+    "preflight": "source",
+    "review": "knowledge",
+    "status": "knowledge",
+    "export": "unavailable",
+    "export-proposal": "unavailable",
+    "publish": "unavailable",
+    "render": "unavailable",
+}
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -150,8 +163,21 @@ def _entry_json(e: dict) -> dict:
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
-    # Served review reads must never bootstrap/open the local knowledge store.
-    if os.environ.get("SPRINTCTL_BACKEND", "local").lower() == "served" and ctx.invoked_subcommand in {"review", "status", "extract"}:
+    mode = os.environ.get("SPRINTCTL_BACKEND", "local").lower()
+    if mode == "served":
+        disposition = SERVED_COMMAND_DISPOSITIONS[ctx.invoked_subcommand]
+        if disposition == "unavailable":
+            raise click.ClickException(
+                "served-operation-unavailable: "
+                f"'kctl {ctx.invoked_subcommand}' has no served operation and "
+                "will not fall back to the local knowledge store"
+            )
+        # Source-only diagnostics open neither Kctl SQLite nor the central
+        # knowledge facade. Their callbacks construct the Sprintctl source.
+        if disposition == "source":
+            return
+        # Served review reads must never bootstrap/open the local knowledge
+        # store. Candidate state remains owned by the knowledge catalog.
         try:
             source = _source.open_sprintctl_source()
         except _source.SprintctlSourceError as exc:
@@ -888,8 +914,55 @@ def status_cmd(obj, sprint_id, kind, output_json) -> None:
 
 
 # ---------------------------------------------------------------------------
-# preflight
+# doctor and preflight
 # ---------------------------------------------------------------------------
+
+@cli.command("doctor")
+@click.option("--sprintctl-repo-id", default=None, help="Served Sprintctl repository ID")
+@click.option("--sprint-id", type=int, default=None, help="Scope maintain.check to one sprint")
+@click.option("--json", "output_json", is_flag=True, default=False, help="Output as JSON")
+def doctor_cmd(sprintctl_repo_id, sprint_id, output_json) -> None:
+    """Check source selection and the owning Sprintctl maintenance contract."""
+    mode = os.environ.get("SPRINTCTL_BACKEND", "local").lower()
+    try:
+        source = _source.open_sprintctl_source(remote_repo_id=sprintctl_repo_id)
+    except _source.SprintctlSourceError as exc:
+        payload = {"ok": False, "mode": mode, "source_id": None, "error": str(exc)}
+        if output_json:
+            click.echo(json.dumps(payload))
+        else:
+            click.echo(f"Error: {exc}", err=True)
+        raise click.exceptions.Exit(1)
+
+    try:
+        warnings = _extract.run_preflight_for_source(source, sprint_id=sprint_id)
+        failure = next(
+            (warning for warning in warnings if warning.startswith("Preflight check failed:")),
+            None,
+        )
+        payload = {
+            "ok": not warnings,
+            "mode": mode,
+            "source_id": source.source_id,
+            "maintain_check": {
+                "available": failure is None,
+                "sprint_id": sprint_id,
+                "warnings": [] if failure else warnings,
+                "error": failure,
+            },
+        }
+    finally:
+        source.close()
+
+    if output_json:
+        click.echo(json.dumps(payload))
+    elif payload["ok"]:
+        click.echo(f"Doctor OK ({mode}, {payload['source_id']}).")
+    else:
+        click.echo(f"Error: {failure or warnings[0]}", err=True)
+    if not payload["ok"]:
+        raise click.exceptions.Exit(1)
+
 
 @cli.command("preflight")
 @click.option(
@@ -954,3 +1027,10 @@ def preflight_cmd(obj, sprintctl_db, sprintctl_repo_id, sprint_id, output_json) 
         sys.exit(1)
     else:
         click.echo("Preflight OK.")
+
+
+assert set(cli.commands) == set(SERVED_COMMAND_DISPOSITIONS), (
+    "SERVED_COMMAND_DISPOSITIONS must classify every top-level Kctl command; "
+    f"unclassified={sorted(set(cli.commands) - set(SERVED_COMMAND_DISPOSITIONS))}, "
+    f"stale={sorted(set(SERVED_COMMAND_DISPOSITIONS) - set(cli.commands))}"
+)
