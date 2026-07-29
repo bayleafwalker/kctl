@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "repo_id": "kctl",
+  "authority_repo_uuid": "c357d1c5-44c3-41e4-ae5b-fe4c5da832ff",
   "adoption_level": "guidance-only",
   "routing": {
     "default_harness": "codex",
