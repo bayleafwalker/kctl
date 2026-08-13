@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -13,10 +14,13 @@ from kctl import review
 from kctl import transfer
 from kctl.central_schema import (
     CURRENT_SCHEMA_VERSION,
+    Migration,
     _REQUIRED_COLUMNS,
     load_migrations,
     migrate,
 )
+from kctl.central_migrations import MIGRATION_ASSETS
+from vuoro_schema_runtime import MigrationAsset, render_schema_sql
 
 
 GIT_REVISION = "a" * 40
@@ -94,6 +98,33 @@ def test_migration_assets_are_contiguous_and_publications_store_references_only(
     assert "inline_supersedes" in _REQUIRED_COLUMNS[
         "knowledge_publication_reference"
     ]
+
+
+def test_shared_runtime_preserves_every_migration_asset_byte_for_byte() -> None:
+    migrations = load_migrations()
+
+    assert Migration is MigrationAsset
+    assert all(isinstance(migration, MigrationAsset) for migration in migrations)
+    assert len(migrations) == len(MIGRATION_ASSETS)
+    for version, (migration, (name, sql)) in enumerate(
+        zip(migrations, MIGRATION_ASSETS, strict=True), start=1
+    ):
+        assert migration.version == version
+        assert migration.name.encode("utf-8") == name.encode("utf-8")
+        assert migration.sql.encode("utf-8") == sql.encode("utf-8")
+        assert migration.sha256 == hashlib.sha256(sql.encode("utf-8")).hexdigest()
+
+
+@pytest.mark.parametrize("schema", ["knowledge", "vuoro_dev_knowledge", "a"])
+def test_shared_runtime_rendering_is_byte_equivalent_to_local_substitution(
+    schema: str,
+) -> None:
+    for migration in load_migrations():
+        expected = migration.sql.replace("__SCHEMA__", f'"{schema}"')
+        actual = render_schema_sql(migration.sql, schema)
+
+        assert actual.encode("utf-8") == expected.encode("utf-8")
+        assert "__SCHEMA__" not in actual
 
 
 def test_local_export_round_trips_digests_git_identity_and_supersession(

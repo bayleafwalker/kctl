@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kctl"
-version = "0.1.2"
+version = "0.1.3"
 requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
     "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl#sha256=0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2",
+    "vuoro-schema-runtime @ https://github.com/bayleafwalker/vuoro/releases/download/vuoro-schema-runtime-v0.1.0/vuoro_schema_runtime-0.1.0-py3-none-any.whl#sha256=b66c9357c99aa9e1a7353991ce54105a8621958ecfac47f8c121d80b90b77912",
 ]
 
 [project.scripts]
