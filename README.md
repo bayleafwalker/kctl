@@ -123,6 +123,15 @@ Install globally via [pipx](https://pipx.pypa.io/):
 pipx install git+https://github.com/bayleafwalker/kctl.git
 ```
 
+Release wheels are published on the kctl GitHub Releases page (kctl is not
+published to PyPI). For a reproducible install, download the wheel from the
+desired release, compare its SHA-256 with the release notes, and install the
+verified local file:
+
+```sh
+pipx install ./kctl-0.1.2-py3-none-any.whl
+```
+
 For local development:
 
 ```sh
