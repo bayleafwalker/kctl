@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+from importlib.metadata import PackageNotFoundError, distribution
+import json
+from pathlib import Path
 import subprocess
 import sys
 from typing import Any
@@ -14,6 +18,7 @@ from kctl.vuoro import (
     READ_AUTHORITY,
     REVIEW_AUTHORITY,
     SCHEMA_DIALECT,
+    SCHEMA_FEATURES,
     VuoroKnowledgeAdapter,
     catalog_operation_specs,
 )
@@ -64,7 +69,7 @@ def test_catalog_is_domain_owned_strict_and_excludes_document_authority() -> Non
         assert spec["result_schema"]["$schema"] == SCHEMA_DIALECT
         assert spec["input_schema"]["additionalProperties"] is False
         assert spec["result_schema"]["additionalProperties"] is False
-        assert spec["required_client_schema_features"] == ["json-schema-draft-2020-12"]
+        assert spec["required_client_schema_features"] == SCHEMA_FEATURES
         if spec["execution_semantics"] != "read":
             assert spec["idempotency"] == "required"
     by_name = {spec["name"]: spec for spec in specs}
@@ -113,6 +118,69 @@ def test_catalog_specs_are_fresh_data_and_handlers_register_without_vuoro() -> N
         spec["name"] for spec in catalog_operation_specs()
     ]
     assert all(callable(handler) for _definition, handler in registry.operations)
+
+
+def test_catalog_wire_hash_is_stable() -> None:
+    wire_specs = [
+        {key: value for key, value in spec.items() if key != "_handler_name"}
+        for spec in catalog_operation_specs()
+    ]
+    payload = json.dumps(wire_specs, sort_keys=True, separators=(",", ":")).encode()
+    assert hashlib.sha256(payload).hexdigest() == (
+        "8fb31046ebcfc6f3c107e1a5cc0c7564d1b676249bf5b6da587cf8089f492abd"
+    )
+
+
+def test_registration_definitions_equal_catalog_wire_specs() -> None:
+    registry = _Registry()
+    VuoroKnowledgeAdapter(
+        CentralKnowledgeApplication(connection_factory=lambda: None)
+    ).register(registry, definition_factory=_definition)
+
+    expected = [
+        {key: value for key, value in spec.items() if key != "_handler_name"}
+        for spec in catalog_operation_specs()
+    ]
+    assert [definition.values for definition, _handler in registry.operations] == expected
+
+
+def test_catalog_nested_data_isolation() -> None:
+    first = catalog_operation_specs()
+    first[0]["input_schema"]["properties"]["candidate"]["properties"][
+        "summary"
+    ]["minLength"] = 99
+    first[0]["required_client_schema_features"].append("test-feature")
+
+    second = catalog_operation_specs()
+    assert (
+        second[0]["input_schema"]["properties"]["candidate"]["properties"][
+            "summary"
+        ]["minLength"]
+        == 1
+    )
+    assert second[0]["required_client_schema_features"] == SCHEMA_FEATURES
+
+
+def test_runtime_dependency_is_pinned_to_immutable_release_wheel() -> None:
+    pyproject = (Path(__file__).parents[1] / "pyproject.toml").read_text()
+    assert (
+        "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/"
+        "download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl"
+    ) in pyproject
+
+
+def test_built_distribution_metadata_declares_pinned_adapter_wheel() -> None:
+    try:
+        requires = distribution("kctl").requires or []
+    except PackageNotFoundError:
+        pytest.skip("kctl is not installed as a distribution")
+    assert any(
+        requirement.startswith(
+            "vuoro-adapter-kit @ https://github.com/bayleafwalker/vuoro/releases/"
+            "download/vuoro-adapter-kit-v0.1.0/vuoro_adapter_kit-0.1.0-py3-none-any.whl"
+        )
+        for requirement in requires
+    )
 
 
 def test_repository_bearing_operations_require_authorized_envelope_scope() -> None:

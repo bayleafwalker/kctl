@@ -11,6 +11,12 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, NoReturn, Protocol
 
+from vuoro_adapter_kit import (
+    SCHEMA_DIALECT as _ADAPTER_SCHEMA_DIALECT,
+    SCHEMA_FEATURES as _ADAPTER_SCHEMA_FEATURES,
+    object_schema,
+)
+
 from .application import (
     CentralKnowledgeApplication,
     KnowledgeApplicationError,
@@ -21,8 +27,10 @@ from .application import (
 from .central_schema import DOMAIN_API_VERSION, SchemaCompatibilityError
 
 
-SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
-SCHEMA_FEATURES = ["json-schema-draft-2020-12"]
+SCHEMA_DIALECT = _ADAPTER_SCHEMA_DIALECT
+# Keep kctl's established list-valued public surface while taking the values
+# from the shared adapter contract.
+SCHEMA_FEATURES = list(_ADAPTER_SCHEMA_FEATURES)
 DOMAIN_NAME = "knowledge"
 READ_AUTHORITY = "knowledge.read"
 INTAKE_AUTHORITY = "knowledge.candidate.intake"
@@ -37,18 +45,7 @@ class CatalogRegistry(Protocol):
     def register(self, definition: Any, handler: Callable[..., Any]) -> None: ...
 
 
-def _object(
-    properties: dict[str, Any], *, required: tuple[str, ...] = ()
-) -> dict[str, Any]:
-    schema: dict[str, Any] = {
-        "$schema": SCHEMA_DIALECT,
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-    if required:
-        schema["required"] = list(required)
-    return schema
+_object = object_schema
 
 
 _NULLABLE_TEXT = {"type": ["string", "null"]}
@@ -650,6 +647,7 @@ __all__ = [
     "READ_AUTHORITY",
     "REVIEW_AUTHORITY",
     "SCHEMA_DIALECT",
+    "SCHEMA_FEATURES",
     "VuoroKnowledgeAdapter",
     "catalog_operation_specs",
     "compatibility_record",
