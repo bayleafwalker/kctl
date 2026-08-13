@@ -9,14 +9,21 @@ from this contract.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
-import re
 import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
+
+from vuoro_schema_runtime import (
+    MigrationAsset,
+    identifier,
+    quote_identifier,
+    render_schema_sql,
+    sha256_text,
+    validate_contiguous_migrations,
+)
 
 from . import db as _db
 from . import transfer
@@ -28,7 +35,6 @@ MIN_RUNTIME_SCHEMA_VERSION = 3
 MAX_RUNTIME_SCHEMA_VERSION = 3
 DOMAIN_API_VERSION = "knowledge/v1"
 MIGRATION_LOCK_NAMESPACE = "kctl-central-schema"
-IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 ENVIRONMENT_CLASSES = {"development", "production", "recovery"}
 
 _COLUMN_SHAPE: dict[str, dict[str, tuple[str, str]]] = {
@@ -292,12 +298,9 @@ class EnvironmentBindingError(CentralSchemaError):
     """An initialized schema cannot be relabeled as another environment."""
 
 
-@dataclass(frozen=True)
-class Migration:
-    version: int
-    name: str
-    sql: str
-    sha256: str
+# Preserve the existing domain-module type name while its implementation comes
+# from the shared, database-independent runtime.
+Migration = MigrationAsset
 
 
 @dataclass(frozen=True)
@@ -333,13 +336,11 @@ class Compatibility:
 
 
 def _identifier(value: str, field: str) -> str:
-    if not IDENTIFIER_RE.fullmatch(value):
-        raise ValueError(f"{field} must be an unquoted PostgreSQL identifier")
-    return value
+    return identifier(value, field)
 
 
 def _quoted(value: str, field: str) -> str:
-    return f'"{_identifier(value, field)}"'
+    return quote_identifier(value, field)
 
 
 def _environment_name(value: str) -> str:
@@ -356,15 +357,15 @@ def _environment_class(value: str) -> str:
     return value
 
 
-def load_migrations() -> tuple[Migration, ...]:
-    migrations: list[Migration] = []
+def load_migrations() -> tuple[MigrationAsset, ...]:
+    migrations: list[MigrationAsset] = []
     for version, (name, sql) in enumerate(MIGRATION_ASSETS, start=1):
         migrations.append(
-            Migration(
+            MigrationAsset(
                 version=version,
                 name=name,
                 sql=sql,
-                sha256=hashlib.sha256(sql.encode("utf-8")).hexdigest(),
+                sha256=sha256_text(sql),
             )
         )
     versions = [migration.version for migration in migrations]
@@ -373,7 +374,7 @@ def load_migrations() -> tuple[Migration, ...]:
         raise CentralSchemaError(
             f"migration assets must be contiguous through {CURRENT_SCHEMA_VERSION}: {versions}"
         )
-    return tuple(migrations)
+    return validate_contiguous_migrations(migrations)
 
 
 def _statements(sql: str) -> tuple[str, ...]:
@@ -634,7 +635,7 @@ def migrate(
             if migration.version > target_version:
                 break
             schema_ident = _quoted(schema, "schema")
-            rendered = migration.sql.replace("__SCHEMA__", schema_ident)
+            rendered = render_schema_sql(migration.sql, schema)
             if "__SCHEMA__" in rendered:
                 raise CentralSchemaError(
                     f"unresolved schema placeholder in migration {migration.version}"

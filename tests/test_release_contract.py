@@ -7,7 +7,10 @@ import pytest
 from verification.validate_release_contract import (
     _adapter_requirement,
     _locked_adapter_requirement,
+    _locked_schema_runtime_requirement,
+    _schema_runtime_requirement,
     _validate_adapter_pin,
+    _validate_schema_runtime_pin,
     validate_wheel,
 )
 
@@ -23,7 +26,32 @@ def test_adapter_dependency_is_an_immutable_github_wheel_pin() -> None:
 
     assert requirement.split("#", 1)[0] == lock_url
     assert digest == lock_digest
-    assert len(digest) == 64
+    assert digest == "0037898a4c9f01720a42302365b0172ecd203732070326ea2abdf549a44bf0c2"
+
+
+def test_schema_runtime_dependency_is_an_immutable_github_wheel_pin() -> None:
+    requirement = _schema_runtime_requirement()
+    lock_url, lock_digest = _locked_schema_runtime_requirement()
+    digest = _validate_schema_runtime_pin(requirement)
+
+    assert requirement.split("#", 1)[0] == lock_url
+    assert digest == lock_digest
+    assert digest == "b66c9357c99aa9e1a7353991ce54105a8621958ecfac47f8c121d80b90b77912"
+
+
+@pytest.mark.parametrize(
+    ("requirement", "validator"),
+    [
+        (_adapter_requirement, _validate_adapter_pin),
+        (_schema_runtime_requirement, _validate_schema_runtime_pin),
+    ],
+    ids=("adapter-kit", "schema-runtime"),
+)
+def test_shared_dependency_contract_rejects_digest_substitution(
+    requirement, validator
+) -> None:
+    with pytest.raises(AssertionError, match="accepted release digest"):
+        validator(requirement().rsplit("=", 1)[0] + "=" + "0" * 64)
 
 
 def _assert_release_workflow(workflow: str) -> None:
