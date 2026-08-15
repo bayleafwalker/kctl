@@ -1,35 +1,33 @@
 # AGENTS.md — kctl
 
-> Environment reference: local devbox and workstation setup may differ. Keep tool install persistence, direnv/PATH setup, and session-level operational notes outside this repository.
+> Shared machine/environment guidance and session notes live outside this repository.
 
 ## Tech Stack
 
-Primary language: Python >= 3.11. Use `pytest` for testing. SQLite-backed local knowledge store. CLI built with `click`. Markdown for documentation. Package manager: `uv` / `pipx`.
+Primary language: Python >= 3.11; tests use `pytest`. SQLite-backed local knowledge store, `click` CLI, Markdown docs, `uv`/`pipx` packaging.
 
-## Environment setup
+## Environment
 
 | Variable | Purpose |
 |---|---|
 | `KCTL_DB` | Override the database path (default: `~/.kctl/kctl.db`) |
 | `KCTL_PROJECT` | Project scope identifier |
 
-Validate that `KCTL_DB` points to the project-scoped database before use. No cluster context: kctl is local-first and optimized for one developer or sparse agent sessions.
+Before use, validate that `KCTL_DB` points to the project-scoped database. kctl is local-first, with no cluster context.
 
-## Development workflow
+## Workflow
 
-- Run targeted `pytest` checks after changes and report results.
-- Never commit with failing tests.
-- Commit at a logical, reviewable scope boundary.
+- Run targeted `pytest` checks after changes and report results; never commit with failing tests.
 - Behavior changes require matching tests.
 - Keep sprintctl read-only from kctl; kctl must not mutate backlog or claim state.
 
-## Purpose
+## Ownership
 
-kctl reads sprintctl event streams, extracts durable and coordination knowledge, and manages review-to-publication lifecycles. The candidate flow is `candidate -> approved|rejected`; approved candidates may become `published` entries and rendered projections.
+kctl reads sprintctl event streams, extracts durable and coordination knowledge, and owns review-to-publication. Candidates transition `candidate -> approved|rejected`; approved candidates may become `published` entries and rendered projections. kctl never writes sprintctl: sprintctl remains sole backlog, sprint, and claim authority.
 
 ## Stateful protocol verification
 
-The governing protocol draft is `docs/protocols/knowledge-lifecycle.md`; repo-specific verification rules are in `.agents/overlays/kctl.state-protocols.md`.
+The governing protocol is `docs/protocols/knowledge-lifecycle.md`; repo-specific verification rules are in `.agents/overlays/kctl.state-protocols.md`.
 
 Use the shared `verify-state-protocols` skill when changes affect extraction watermarks, source-event deduplication, candidate transitions, publication, supersession, or rendering. Default to Depth 1. Escalate to Depth 2 only if concurrent writers or independent processes become supported.
 

@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "repo_id": "kctl",
   "authority_repo_uuid": "c357d1c5-44c3-41e4-ae5b-fe4c5da832ff",
   "adoption_level": "guidance-only",
@@ -21,10 +21,66 @@
       "dispatch-build",
       "dispatch-review",
       "code-change-verification",
+      "kctl-extract",
       "verify-state-protocols",
       "reconcile-project-contracts"
     ],
     "overlays": [".agents/overlays/kctl.state-protocols.md"]
+  },
+  "instruction_set": {
+    "schema_version": 1,
+    "discovery": "native",
+    "sources": [
+      {
+        "id": "kctl-agents",
+        "path": "AGENTS.md",
+        "kind": "AGENTS.md",
+        "digest": "779cccd8b0e2c6f4501f24925e802d635ec23975b54592fa0660b372fca2b32e",
+        "source_rev": "git:afd135b2f6499d63d07aa0be534f111620fdb5d5",
+        "refs": [],
+        "rules": [],
+        "hooks": [],
+        "line_budget": 80
+      },
+      {
+        "id": "kctl-claude",
+        "path": "CLAUDE.md",
+        "kind": "CLAUDE.md",
+        "digest": "6dc865c463f89e3e6c8e80213c7b7fc52fdc5f3180e7f3df18b1293bee426c27",
+        "source_rev": "git:afd135b2f6499d63d07aa0be534f111620fdb5d5",
+        "refs": [],
+        "rules": [],
+        "hooks": [],
+        "line_budget": 20
+      }
+    ],
+    "applicability": {
+      "paths": ["kctl/", "tests/", "docs/", "verification/", ".agents/"],
+      "roles": ["planner", "worker", "reviewer"]
+    },
+    "entrypoints": {
+      "architecture": ["README.md", "docs/protocols/"],
+      "plan": ["docs/plans/", "docs/protocols/"],
+      "runbook": ["README.md", "docs/operations/"]
+    },
+    "role_presets": {
+      "planner": { "model": "Sol", "behavior": "xhigh", "tool_mode": "read-only" },
+      "worker": { "model": "Luna", "behavior": "high", "tool_mode": "write" },
+      "reviewer": { "model": "Sol", "behavior": "xhigh", "tool_mode": "read-only" }
+    },
+    "provider_adapters": [
+      { "provider": "codex", "path": "AGENTS.md" },
+      { "provider": "claude", "path": "CLAUDE.md" }
+    ],
+    "skill_lock": {
+      "dispatch-plan": "8da2efaaa4f760a468e5b642d2aa47162df594b52b813138e875189726cf34d6",
+      "dispatch-build": "f895830df38ea72b79f13864130fd2e3ffca3488b261d38744c86cfc79995a1f",
+      "dispatch-review": "0bf4c6f46b30f8ea33c5e226f90f000919291bbe199e0ae14d39cb1c219ea678",
+      "code-change-verification": "da8dca1568f93ca1cb7f73ff88d75849c5c58676c4b3274516069a3197fe13a3",
+      "kctl-extract": "16dc7a888f27818679cd6e321959108588259eb12167601e8731c18fd484f53d",
+      "verify-state-protocols": "53e405447abb8ff83f35b49fecf0131652bc30f5452d52acebd300960888995c",
+      "reconcile-project-contracts": "3161e7ac4455bfccf20d783a4e9af5ac507c233d4a0afd3acad2857dafccad70"
+    }
   },
   "scope": {
     "allowed_path_roots": ["kctl/", "tests/", "docs/", "verification/", ".agents/"],
