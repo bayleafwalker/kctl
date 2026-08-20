@@ -110,22 +110,31 @@ def test_extract_candidates_with_real_sprintctl_payloads(tmp_path):
             "git_sha": "abc123",
         },
     )
-    claim_id = sdb.create_claim(
+    first_reservation = sdb.reserve(
         conn,
         item_id,
-        "agent-1",
-        runtime_session_id="sess-1",
-        instance_id="inst-1",
+        actor="agent-1",
+        session_id="sess-1",
+        role="execution",
     )
-    claim = sdb.get_claim(conn, claim_id, include_secret=True)
-    sdb.handoff_claim(
+    overlapping_reservation = sdb.reserve(
         conn,
-        claim_id,
-        claim["claim_token"],
+        item_id,
         actor="agent-2",
-        performed_by="agent-1",
-        note="handoff note",
+        session_id="sess-2",
+        role="execution",
     )
+    assert first_reservation["conflict"] is False
+    assert overlapping_reservation["conflict"] is True
+    assert overlapping_reservation["conflict_severity"] == "warning"
+    assert [
+        reservation["actor"]
+        for reservation in overlapping_reservation["conflicting_reservations"]
+    ] == ["agent-1"]
+    assert {
+        reservation["actor"]
+        for reservation in sdb.list_reservations(conn, item_id)
+    } == {"agent-1", "agent-2"}
     conn.close()
 
     kctl_conn = _db.get_connection(tmp_path / "kctl.db")
@@ -143,12 +152,13 @@ def test_extract_candidates_with_real_sprintctl_payloads(tmp_path):
     sc_conn.close()
     kctl_conn.close()
 
-    assert structured_count == 2
+    # Routine advisory-reservation churn remains visible in Sprintctl but is
+    # not promoted to durable knowledge by kctl's default extraction policy.
+    assert structured_count == 1
     by_type = {row["event_type"]: row for row in created}
     assert by_type["decision"]["candidate_kind"] == "durable"
-    assert by_type["claim-handoff"]["candidate_kind"] == "coordination"
     assert json.loads(by_type["decision"]["source_payload"])["git_branch"] == "feat/auth"
-    assert json.loads(by_type["claim-handoff"]["source_payload"])["to_identity"]["actor"] == "agent-2"
+    assert "reservation.reserved" not in by_type
 
 
 def test_cli_preflight_json_ok(monkeypatch, sc_db_path, runner):
