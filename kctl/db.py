@@ -24,6 +24,78 @@ COORDINATION_EVENT_TYPES = {
     "coordination-failure",
 }
 
+def _migrate_8_widen_entry_categories(conn: sqlite3.Connection) -> None:
+    """Admit `tenet` and `direction` as knowledge categories.
+
+    Tenets, directions, practices and decisions are all claims in the
+    metanarrative model (agentops `templates/dispatch/model/README.md`), so a
+    published claim should keep its kind rather than flatten to `decision`.
+
+    SQLite cannot alter a CHECK constraint, so the table is rebuilt. This runs in
+    Python because `knowledge_entry.superseded_by` references the table itself:
+    foreign keys have to be off for the swap, and `PRAGMA foreign_keys` is a no-op
+    inside a transaction -- so each toggle commits first, or the pragma silently
+    does nothing and the connection is left with enforcement off. Migration 1 is left
+    untouched -- a fresh database reaches the same shape by running 1 through 8,
+    which is what keeps new and existing databases from diverging the way they did
+    at migration 7.
+    """
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE knowledge_entry_migrated (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                candidate_id   INTEGER NOT NULL REFERENCES knowledge_candidate(id),
+                title          TEXT    NOT NULL,
+                body           TEXT    NOT NULL,
+                tags           TEXT    NOT NULL DEFAULT '[]',
+                category       TEXT    NOT NULL
+                                       CHECK (category IN (
+                                           'decision', 'pattern', 'lesson', 'risk',
+                                           'reference', 'tenet', 'direction'
+                                       )),
+                source_sprint  TEXT    NOT NULL,
+                source_track   TEXT,
+                created_at     TEXT    NOT NULL,
+                superseded_by  INTEGER REFERENCES knowledge_entry_migrated(id),
+                source_kind    TEXT    NOT NULL DEFAULT 'durable'
+            )
+            """
+        )
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(knowledge_entry)")]
+        shared = [
+            name
+            for name in columns
+            if name
+            in {
+                "id",
+                "candidate_id",
+                "title",
+                "body",
+                "tags",
+                "category",
+                "source_sprint",
+                "source_track",
+                "created_at",
+                "superseded_by",
+                "source_kind",
+            }
+        ]
+        joined = ", ".join(shared)
+        conn.execute(
+            f"INSERT INTO knowledge_entry_migrated ({joined}) "
+            f"SELECT {joined} FROM knowledge_entry"
+        )
+        conn.execute("DROP TABLE knowledge_entry")
+        conn.execute("ALTER TABLE knowledge_entry_migrated RENAME TO knowledge_entry")
+    finally:
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def _migrate_7_fix_source_kind_column_name(conn: sqlite3.Connection) -> None:
     """Repair knowledge_entry.source_candidate_kind -> source_kind (see migration 7 note)."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(knowledge_entry)")}
@@ -147,6 +219,9 @@ _MIGRATIONS: list[Union[str, Callable[[sqlite3.Connection], None]]] = [
     # rename (schema_version stayed at 6, the version check never re-triggers
     # it). Conditional on prior state, so this must run in Python, not raw SQL.
     _migrate_7_fix_source_kind_column_name,
+    # Migration 8: widen knowledge_entry.category so a published claim keeps its
+    # kind. Rebuilds the table, because SQLite cannot alter a CHECK.
+    _migrate_8_widen_entry_categories,
 ]
 
 

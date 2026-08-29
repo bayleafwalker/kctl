@@ -3,7 +3,18 @@ import sqlite3
 
 from . import db as _db
 
-VALID_CATEGORIES = {"decision", "pattern", "lesson", "risk", "reference"}
+VALID_CATEGORIES = {
+    "decision",
+    "pattern",
+    "lesson",
+    "risk",
+    "reference",
+    # Claim kinds from the metanarrative model (agentops
+    # templates/dispatch/model/README.md). A published tenet or direction keeps
+    # its kind here rather than flattening to `decision`.
+    "tenet",
+    "direction",
+}
 
 
 def publish_candidate(

@@ -128,4 +128,18 @@ MIGRATION_ASSETS: tuple[tuple[str, str], ...] = (
             REFERENCES __SCHEMA__.knowledge_publication_reference(repo_id, publication_id);
         """,
     ),
+    (
+        "claim_kinds_as_knowledge_categories",
+        r"""
+        ALTER TABLE __SCHEMA__.knowledge_publication_reference
+            DROP CONSTRAINT knowledge_publication_reference_category_check;
+
+        ALTER TABLE __SCHEMA__.knowledge_publication_reference
+            ADD CONSTRAINT knowledge_publication_reference_category_check
+            CHECK (category IN (
+                'decision', 'pattern', 'lesson', 'risk', 'reference',
+                'tenet', 'direction'
+            ));
+        """,
+    ),
 )

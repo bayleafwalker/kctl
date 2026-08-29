@@ -544,7 +544,7 @@ def review_reject(obj, candidate_id, reason, reviewer) -> None:
 @click.option(
     "--category",
     required=True,
-    type=click.Choice(["decision", "pattern", "lesson", "risk", "reference"]),
+    type=click.Choice(sorted(_publish.VALID_CATEGORIES)),
     help="Knowledge category",
 )
 @click.option("--tags", default=None, help='Tags as JSON array, e.g. \'["auth","lessons"]\'')

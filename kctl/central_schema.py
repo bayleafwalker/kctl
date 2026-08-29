@@ -30,7 +30,7 @@ from . import transfer
 from .central_migrations import MIGRATION_ASSETS
 
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 MIN_RUNTIME_SCHEMA_VERSION = 3
 MAX_RUNTIME_SCHEMA_VERSION = 3
 DOMAIN_API_VERSION = "knowledge/v1"
@@ -247,7 +247,16 @@ _REQUIRED_CHECK_FRAGMENTS = {
     (
         "knowledge_publication_reference",
         "knowledge_publication_reference_category_check",
-    ): ("category", "'decision'", "'pattern'", "'lesson'", "'risk'", "'reference'"),
+    ): (
+        "category",
+        "'decision'",
+        "'pattern'",
+        "'lesson'",
+        "'risk'",
+        "'reference'",
+        "'tenet'",
+        "'direction'",
+    ),
     (
         "knowledge_publication_reference",
         "knowledge_publication_reference_source_kind_check",
