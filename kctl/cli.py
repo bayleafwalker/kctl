@@ -17,6 +17,7 @@ from .served_knowledge import ServedKnowledgeClient
 
 
 SERVED_COMMAND_DISPOSITIONS = {
+    "adopt": "knowledge",
     "doctor": "source",
     "extract": "knowledge",
     "preflight": "source",
@@ -580,6 +581,48 @@ def publish_cmd(obj, candidate_id, title, body, supersedes_entry_id, category, t
     tags_str = _format_tags(entry.get("tags"))
     if tags_str:
         click.echo(f"  Tags: {tags_str}")
+
+
+# ---------------------------------------------------------------------------
+# adopt
+# ---------------------------------------------------------------------------
+
+@cli.command("adopt")
+@click.option("--summary", required=True, help="One-line summary; becomes the candidate summary")
+@click.option("--detail", default=None, help="Extended detail")
+@click.option("--event-type", required=True, help="Originating record type, e.g. model.claim")
+@click.option("--origin", default="external", help="Where this came from, e.g. metanarrative")
+@click.option("--actor", default=None, help="Who established it")
+@click.option("--tags", default=None, help='Tags as JSON array, e.g. \'["direction"]\'')
+@click.pass_obj
+def adopt_cmd(obj, summary, detail, event_type, origin, actor, tags) -> None:
+    """Adopt a record that did not come from a sprintctl event as a candidate.
+
+    `extract` reads sprintctl events, which is the only way a candidate could be
+    created until now. A metanarrative claim has no sprintctl event and no sprint,
+    so the claims path that `templates/dispatch/model/README.md` documents --
+    "kctl is the claims store" -- could not be walked at all. This is the door for
+    those records; it does not approve or publish them, so the review boundary is
+    unchanged.
+    """
+    conn = obj["conn"]
+    candidate_id = _db.insert_candidate(
+        conn,
+        {
+            "event_type": event_type,
+            "summary": summary,
+            "detail": detail,
+            "tags": tags,
+            "source_origin": origin,
+            "source_actor": actor,
+            "source_created_at": _now(),
+            "extracted_at": _now(),
+        },
+    )
+    if candidate_id is None:
+        click.echo("Error: candidate not created", err=True)
+        sys.exit(1)
+    click.echo(f"Adopted candidate #{candidate_id} ({origin}): {summary}")
 
 
 # ---------------------------------------------------------------------------

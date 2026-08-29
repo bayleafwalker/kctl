@@ -96,6 +96,83 @@ def _migrate_8_widen_entry_categories(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _migrate_9_admit_non_sprintctl_candidates(conn: sqlite3.Connection) -> None:
+    """Admit candidates that did not come from a sprintctl event.
+
+    `knowledge_candidate` was shaped entirely around extraction: every row needed a
+    `source_event_id INTEGER NOT NULL UNIQUE` and a `source_sprint_id INTEGER NOT
+    NULL`, because the only way in was `kctl extract` reading sprintctl events. That
+    made the documented claims path impossible to walk. agentops
+    `templates/dispatch/model/README.md` says "kctl is the claims store… `publish`
+    hands a claim over as a knowledge entry", but a metanarrative claim has no
+    sprintctl event and no sprint, so it could not become a candidate and therefore
+    could not be published. The store's own contract was unreachable through its own
+    schema.
+
+    Both columns become nullable and a `source_origin` discriminator is added,
+    defaulting to `sprintctl` so every existing row keeps its meaning. Extraction is
+    unchanged: it still supplies an event id, and the UNIQUE constraint still dedupes
+    it, because SQLite permits many NULLs in a UNIQUE column and constrains only the
+    non-null ones — which is exactly the semantics wanted here.
+
+    SQLite cannot drop NOT NULL in place, so the table is rebuilt. Foreign keys are
+    toggled around the swap because `knowledge_entry.candidate_id` references this
+    table, and `PRAGMA foreign_keys` is a no-op inside a transaction — so each toggle
+    commits first, following migration 8.
+    """
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(knowledge_candidate)")}
+    if "source_origin" in columns:
+        return
+
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE knowledge_candidate_migrated (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_event_id  INTEGER UNIQUE,
+                source_sprint_id INTEGER,
+                source_item_id   INTEGER,
+                source_track     TEXT,
+                source_actor     TEXT,
+                source_type      TEXT,
+                source_created_at TEXT,
+                source_payload   TEXT,
+                source_origin    TEXT    NOT NULL DEFAULT 'sprintctl',
+                event_type       TEXT    NOT NULL,
+                candidate_kind   TEXT    NOT NULL DEFAULT 'durable',
+                summary          TEXT    NOT NULL,
+                detail           TEXT,
+                tags             TEXT,
+                confidence       TEXT,
+                status           TEXT    NOT NULL DEFAULT 'candidate'
+                                         CHECK (status IN ('candidate', 'approved', 'rejected', 'published')),
+                extracted_at     TEXT    NOT NULL,
+                reviewed_at      TEXT,
+                reviewed_by      TEXT,
+                review_notes     TEXT
+            )
+            """
+        )
+        existing = [row[1] for row in conn.execute("PRAGMA table_info(knowledge_candidate)")]
+        target = {row[1] for row in conn.execute("PRAGMA table_info(knowledge_candidate_migrated)")}
+        shared = [name for name in existing if name in target]
+        joined = ", ".join(shared)
+        conn.execute(
+            f"INSERT INTO knowledge_candidate_migrated ({joined}) "
+            f"SELECT {joined} FROM knowledge_candidate"
+        )
+        conn.execute("DROP TABLE knowledge_candidate")
+        conn.execute(
+            "ALTER TABLE knowledge_candidate_migrated RENAME TO knowledge_candidate"
+        )
+    finally:
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def _migrate_7_fix_source_kind_column_name(conn: sqlite3.Connection) -> None:
     """Repair knowledge_entry.source_candidate_kind -> source_kind (see migration 7 note)."""
     columns = {row[1] for row in conn.execute("PRAGMA table_info(knowledge_entry)")}
@@ -222,6 +299,9 @@ _MIGRATIONS: list[Union[str, Callable[[sqlite3.Connection], None]]] = [
     # Migration 8: widen knowledge_entry.category so a published claim keeps its
     # kind. Rebuilds the table, because SQLite cannot alter a CHECK.
     _migrate_8_widen_entry_categories,
+    # Migration 9: admit candidates with no sprintctl event behind them, so the
+    # claims path the model README already documents can actually be walked.
+    _migrate_9_admit_non_sprintctl_candidates,
 ]
 
 
@@ -287,18 +367,20 @@ def insert_candidate(conn: sqlite3.Connection, candidate: dict) -> int | None:
         INSERT OR IGNORE INTO knowledge_candidate
             (source_event_id, source_sprint_id, source_item_id, source_track,
              source_actor, source_type, source_created_at, source_payload,
-             event_type, candidate_kind, summary, detail, tags, confidence, status, extracted_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
+             source_origin, event_type, candidate_kind, summary, detail, tags,
+             confidence, status, extracted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', ?)
         """,
         (
-            candidate["source_event_id"],
-            candidate["source_sprint_id"],
+            candidate.get("source_event_id"),
+            candidate.get("source_sprint_id"),
             candidate.get("source_item_id"),
             candidate.get("track_name"),
             candidate.get("source_actor"),
             candidate.get("source_type"),
             candidate.get("source_created_at"),
             candidate.get("source_payload"),
+            candidate.get("source_origin", "sprintctl"),
             candidate["event_type"],
             candidate.get("candidate_kind", "durable"),
             candidate["summary"],
