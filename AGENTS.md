@@ -13,7 +13,7 @@ Primary language: Python >= 3.11. Use `pytest` for testing. SQLite-backed local 
 | `KCTL_DB` | Override the database path (default: `~/.kctl/kctl.db`) |
 | `KCTL_PROJECT` | Project scope identifier |
 
-Validate that `KCTL_DB` points to the project-scoped database before use. No cluster context: kctl is local-first and optimized for one developer or sparse agent sessions.
+Validate that `KCTL_DB` points to the project-scoped database before use. Local mode has no cluster context. Served mode does: with `SPRINTCTL_BACKEND=served` and `SPRINTCTL_VUORO_PROFILE`, kctl reaches the deployed Vuoro knowledge domain for candidate intake and review, while publication, render, and export stay Git- and local-owned and fail with `served-operation-unavailable`.
 
 ## Development workflow
 

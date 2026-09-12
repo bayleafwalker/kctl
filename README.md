@@ -13,7 +13,7 @@ kctl extracts two distinct streams from execution:
 - A review surface that separates durable knowledge from coordination items
 - A durable knowledge pipeline: `candidate -> approved -> published -> rendered markdown`
 - A producer of local artifacts and machine-readable outputs that agents can use when deciding sprintctl actions
-- Local-first: SQLite on disk, convergence through committed markdown
+- Local-owned state: SQLite on disk, convergence through committed markdown
 
 ## What kctl is not
 
@@ -21,7 +21,8 @@ kctl extracts two distinct streams from execution:
 - Not a direct sprint seeding tool
 - Not a replacement for sprintctl's write-side command surface
 - Not a wiki, search engine, or documentation generator
-- Not a hosted service or remote knowledge store
+- Not a hosted publication store: served mode carries candidate intake and review;
+  publication, render, and export stay Git- and local-owned
 - Not optimised for concurrent contributors across machines
 
 ## Two streams
