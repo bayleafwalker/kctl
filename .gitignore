@@ -4,5 +4,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .kctl/
+.auditctl/
 
 build/
