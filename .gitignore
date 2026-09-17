@@ -8,3 +8,8 @@ __pycache__/
 
 build/
 .claude/settings.local.json
+
+# auditctl local event database and NDJSON audit shards (auditctl 0.1.8, hook output
+# from nearest-marker rooting; not committed in this repo)
+.auditctl/
+_artifacts/*/audit*/
