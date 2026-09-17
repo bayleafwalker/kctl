@@ -1,7 +1,7 @@
 """Coverage for migration 8: knowledge categories admit the claim kinds.
 
 Tenets, directions, practices and decisions are all claims in the metanarrative
-model (agentops `templates/dispatch/model/README.md`). A published tenet should
+model (the retired agentops dispatch model README). A published tenet should
 keep its kind rather than flatten to `decision`, so `knowledge_entry.category`
 had to widen.
 

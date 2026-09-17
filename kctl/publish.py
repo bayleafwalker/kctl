@@ -9,8 +9,8 @@ VALID_CATEGORIES = {
     "lesson",
     "risk",
     "reference",
-    # Claim kinds from the metanarrative model (agentops
-    # templates/dispatch/model/README.md). A published tenet or direction keeps
+    # Claim kinds from the metanarrative model (the retired agentops
+    # dispatch model README). A published tenet or direction keeps
     # its kind here rather than flattening to `decision`.
     "tenet",
     "direction",

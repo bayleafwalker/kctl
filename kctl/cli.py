@@ -600,7 +600,7 @@ def adopt_cmd(obj, summary, detail, event_type, origin, actor, tags) -> None:
 
     `extract` reads sprintctl events, which is the only way a candidate could be
     created until now. A metanarrative claim has no sprintctl event and no sprint,
-    so the claims path that `templates/dispatch/model/README.md` documents --
+    so the claims path that the retired agentops dispatch model README documents --
     "kctl is the claims store" -- could not be walked at all. This is the door for
     those records; it does not approve or publish them, so the review boundary is
     unchanged.

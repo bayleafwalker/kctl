@@ -1,6 +1,6 @@
 """A claim must be able to reach the knowledge store it is documented to live in.
 
-`templates/dispatch/model/README.md` (agentops) says "kctl is the claims store…
+The retired agentops dispatch model README says "kctl is the claims store…
 `publish` hands a claim over as a knowledge entry". Until migration 9 that was
 unreachable: `knowledge_candidate.source_event_id` was `NOT NULL UNIQUE` and
 `source_sprint_id` was `NOT NULL`, so only `extract` -- which reads sprintctl
