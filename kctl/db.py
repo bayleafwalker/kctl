@@ -28,7 +28,7 @@ def _migrate_8_widen_entry_categories(conn: sqlite3.Connection) -> None:
     """Admit `tenet` and `direction` as knowledge categories.
 
     Tenets, directions, practices and decisions are all claims in the
-    metanarrative model (agentops `templates/dispatch/model/README.md`), so a
+    metanarrative model (the retired agentops dispatch model README), so a
     published claim should keep its kind rather than flatten to `decision`.
 
     SQLite cannot alter a CHECK constraint, so the table is rebuilt. This runs in
@@ -102,8 +102,8 @@ def _migrate_9_admit_non_sprintctl_candidates(conn: sqlite3.Connection) -> None:
     `knowledge_candidate` was shaped entirely around extraction: every row needed a
     `source_event_id INTEGER NOT NULL UNIQUE` and a `source_sprint_id INTEGER NOT
     NULL`, because the only way in was `kctl extract` reading sprintctl events. That
-    made the documented claims path impossible to walk. agentops
-    `templates/dispatch/model/README.md` says "kctl is the claims store… `publish`
+    made the documented claims path impossible to walk. The retired agentops
+    dispatch model README says "kctl is the claims store… `publish`
     hands a claim over as a knowledge entry", but a metanarrative claim has no
     sprintctl event and no sprint, so it could not become a candidate and therefore
     could not be published. The store's own contract was unreachable through its own
