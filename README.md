@@ -308,10 +308,12 @@ Coordination candidates require `--coordination`. That keeps durable publication
 
 Categories:
 - `decision`
-- `pattern`
+- `direction`
 - `lesson`
-- `risk`
+- `pattern`
 - `reference`
+- `risk`
+- `tenet`
 
 `--supersedes` marks an older entry as superseded by the newly published one.
 
