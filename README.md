@@ -6,6 +6,11 @@ kctl extracts two distinct streams from execution:
 - durable knowledge that can be reviewed, published, and rendered into a committed knowledge base
 - handoff and coordination items that remain reviewable but separate from durable knowledge
 
+> **Transition (2026-10-05).** kctl follows the planned move into lesson and claim evidence
+> plus Decisions at S4 (agentops target state TS-13). Do not add a new knowledge lifecycle
+> while that migration is pending; provider evaluation results are imported as evidence
+> through the substrate (TS-18), not through kctl.
+
 ## What kctl is
 
 - A tool for one developer or one sparse agentic session at a time
