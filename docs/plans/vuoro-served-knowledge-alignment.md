@@ -4,6 +4,10 @@ status: ratified
 ratified_at: 2026-07-21
 ratified_by: operator
 governing_decision: agentops/docs/plans/agentops/vuoro-served-substrate-plan.md
+purpose: decision
+applies_to:
+  components: [kctl, knowledge-base, vuoro-core]
+subjects: [knowledge-resolution]
 ---
 
 # Kctl alignment with the Vuoro knowledge module
