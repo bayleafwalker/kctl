@@ -1,0 +1,67 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "kctl.knowledge.current-owner-documentation",
+  "contract_ref": {
+    "doc_id": "vuoro-knowledge-workspace-phase0",
+    "revision": "git:aa5af4de351f011c1d4f795eaa72b692c5dfcb47"
+  },
+  "implementation_sha": "98d94bb1d2998d8aa6f92da105c7a794b05468b6",
+  "depth": 0,
+  "environment": {
+    "backend": "Git-authored-documentation-validation",
+    "tool_versions": {
+      "python": "3.13.16",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "histories": 5,
+    "bounds": {
+      "documentation_contract_tests": 5,
+      "pinned_owner_doc_paths": 2,
+      "parent_reported_authority_tests_not_rerun": 4
+    },
+    "faults_exercised": [
+      "review of stale legacy-owner routing statements against current owner records"
+    ]
+  },
+  "claims": [
+    {
+      "property": "documentation distinguishes deployed Workspace authority from retained legacy kctl reference and records contributor/reviewer separation without new caller grants",
+      "result": "documented-only",
+      "evidence": [
+        "README.md",
+        "AGENTS.md",
+        "docs/plans/vuoro-served-knowledge-alignment.md",
+        "docs/protocols/central-knowledge-workflow.md",
+        "docs/evidence/2026-10-18-legacy-knowledge-owner-reconciliation.md"
+      ]
+    },
+    {
+      "property": "governed documentation hashes match the clarified protocol and all current packets/manifest validate",
+      "result": "example-tested",
+      "evidence": [
+        "uv run --frozen --extra dev pytest -q tests/test_verification_contracts.py:5passed",
+        "central workflow protocol SHA256:26265bc2ff120a6c26b97a0541c61515332ecc5da43be06598076ee50278a916",
+        "python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root .:all contexts/results/manifest pass"
+      ]
+    },
+    {
+      "property": "pinned owner documents/test paths resolve in Git while original plan ratification metadata and historical result packets are preserved",
+      "result": "example-tested",
+      "evidence": [
+        "git cat-file -e at Vuoro aa5af4de351f011c1d4f795eaa72b692c5dfcb47 for two owner docs and two owner test paths",
+        "July alignment plan frontmatter compared byte-for-byte with baseline",
+        "git diff --exit-code over runtime, tests, package pins and existing verification/results returned empty"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "This is docs-only Depth0 reconciliation. No owner authority tests, production writes, imports, grants, membership changes, service acceptance or central lifecycle verification were executed by this docs session.",
+    "The coordinator separately reported4existing Workspace authority tests passing with1deprecationwarning in2.13s at Vuoro aa5af4de351f011c1d4f795eaa72b692c5dfcb47. Exact selectors, command, catalog revision and attribution are recorded in the durable evidence note, not restamped as a new run here.",
+    "Current central-workflow and compatibility context hashes refer to the clarified protocol. Historical result packets retain the contract revisions and claims observed by their original runs.",
+    "Parent findings-first and optimistic actual-diff reviews found no blockers before publication.",
+    "Rebased onto CI commit2478c7f; no runtime, schema, grants, package pin/version, service or deployment change."
+  ]
+}

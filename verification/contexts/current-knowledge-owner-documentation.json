@@ -1,0 +1,73 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.current-owner-documentation",
+  "owner_repo": "kctl",
+  "subject": "legacy-versus-current-knowledge-owner-documentation",
+  "contract_ref": {
+    "doc_id": "vuoro-knowledge-workspace-phase0",
+    "revision": "git:aa5af4de351f011c1d4f795eaa72b692c5dfcb47"
+  },
+  "source_of_truth": "pinned-Git-owner-direction-and-composition-documents",
+  "depth": 0,
+  "backends": [
+    "Git-authored-documents"
+  ],
+  "actors": [
+    "documentation-reviewer"
+  ],
+  "initial_state": [
+    "legacy served-owner wording predates Workspace composition"
+  ],
+  "operations": [
+    {
+      "name": "read-current-owner-contracts",
+      "actors": [
+        "documentation-reviewer"
+      ]
+    },
+    {
+      "name": "review-documentation-scope",
+      "actors": [
+        "documentation-reviewer"
+      ]
+    },
+    {
+      "name": "validate-protocol-context-hashes",
+      "actors": [
+        "documentation-reviewer"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "documented-only",
+    "object": "current-owner-routing-and-legacy-reference-scope"
+  },
+  "bounds": {
+    "parent_reported_authority_tests": 4,
+    "documentation_contract_tests": 5
+  },
+  "invariants": [
+    "deployed Workspace owner is distinguished from retained kctl adapter",
+    "kctl remains retiring with no new operations",
+    "contributor-reviewer separation confers no new caller grants or acceptance",
+    "historical ratification metadata and verification result packets are preserved"
+  ],
+  "faults": [
+    "stale documentation routes current knowledge intake to legacy owner"
+  ],
+  "oracles": [
+    "pinned owner direction and composition sources resolve in Git",
+    "governed context hashes match clarified protocol",
+    "diff contains documentation and verification metadata only"
+  ],
+  "implementation_anchors": [
+    "kctl/served_knowledge.py",
+    "kctl/vuoro.py:catalog_operation_specs",
+    "README.md",
+    "AGENTS.md",
+    "docs/protocols/central-knowledge-workflow.md"
+  ],
+  "expansions": [
+    "semantic-doc"
+  ]
+}
