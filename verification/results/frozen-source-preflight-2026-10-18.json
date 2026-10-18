@@ -1,0 +1,73 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "kctl.knowledge.frozen-source-preflight",
+  "contract_ref": {
+    "doc_id": "kctl.frozen-source-preflight",
+    "revision": "sha256:c8859b4e91de6581fe3ee35c5b7c3b74e7a4ab4038e5a9fc6347c1af9bd53ddb"
+  },
+  "implementation_sha": "bc45fafba0899a84a8201f4b085c1d740ea37ce1",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary-local-sqlite",
+    "isolation": "single writer; synthetic snapshots and isolated knowledge stores",
+    "tool_versions": {
+      "python": "3.13.16",
+      "sqlite": "3.53.1",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "snapshot_bytes": 67108864,
+      "rows": 100000,
+      "targeted_tests": 19,
+      "full_suite_passed": 222,
+      "full_suite_skipped": 4
+    },
+    "faults_exercised": [
+      "changed snapshot digest",
+      "unknown schema or noninteger identity",
+      "WAL main-file input",
+      "partial or duplicate publication",
+      "file size grows after stat"
+    ]
+  },
+  "claims": [
+    {
+      "property": "all supported source rows, including NULL sprintctl origins, newer categories, review metadata, both watermark tables and sequence counters, are covered by redacted typed digests",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_source_preflight.py:test_covers_all_rows_and_newer_local_shapes_without_leaking_content",
+        "tests/test_source_preflight.py:test_source_digests_preserve_provenance_and_sqlite_types"
+      ]
+    },
+    {
+      "property": "source input bounds, schema/identity refusals and publication diagnostics are enforced without default-store or source mutation",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_source_preflight.py: 19 passed",
+        "tests/test_source_preflight.py:test_real_module_entrypoint_never_bootstraps_configured_store",
+        "tests/test_source_preflight.py:test_partial_duplicate_missing_and_cyclic_publications_remain_covered"
+      ]
+    },
+    {
+      "property": "qualifier and merged publication repair pass the available complete suite",
+      "result": "example-tested",
+      "evidence": [
+        "uv run --frozen pytest -q --basetemp <fresh /var/tmp directory>: 222 passed, 4 skipped"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "During review, the initial qualifier collapsed multiple NULL ids admitted by INTEGER PRIMARY KEY DESC. The regression failed with DID NOT RAISE before actual unique-integer identity checks; it now passes.",
+      "trace_ref": "tests/test_source_preflight.py:test_non_integer_primary_key_identities_are_refused_before_diagnostics"
+    }
+  ],
+  "notes": [
+    "Evidence consists of deterministic example tests; no generated reference model, retained concurrent histories, formal proof or PostgreSQL verification is claimed.",
+    "No production artifacts, services, central schema, package versions, dependency pins or historical source records were changed.",
+    "Optimistic planner performed independent findings-first review; the source qualifier additionally passed its 19 tests independently."
+  ]
+}

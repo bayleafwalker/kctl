@@ -1,0 +1,72 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.frozen-source-preflight",
+  "owner_repo": "kctl",
+  "subject": "frozen-local-source-coverage",
+  "contract_ref": {
+    "doc_id": "kctl.frozen-source-preflight",
+    "revision": "sha256:c8859b4e91de6581fe3ee35c5b7c3b74e7a4ab4038e5a9fc6347c1af9bd53ddb"
+  },
+  "source_of_truth": "explicit-frozen-sqlite-bytes",
+  "depth": 1,
+  "backends": [
+    "sqlite"
+  ],
+  "actors": [
+    "reviewer"
+  ],
+  "initial_state": [
+    "disposable synthetic source and temporary local stores"
+  ],
+  "operations": [
+    {
+      "name": "qualify-explicit-snapshot",
+      "actors": [
+        "reviewer"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "frozen-local-source-coverage"
+  },
+  "assumptions": {
+    "isolation": "single writer; disposable local fixtures",
+    "clock": "fixed test timestamps",
+    "fairness": "not-applicable"
+  },
+  "bounds": {
+    "snapshot_bytes": 67108864,
+    "rows": 100000,
+    "targeted_tests": 19,
+    "full_suite_passed": 222,
+    "full_suite_skipped": 4
+  },
+  "invariants": [
+    "all known source tables and rows are represented without transfer-v1 filtering",
+    "source and configured stores remain unchanged",
+    "source coverage does not establish cutover or live-tail authority",
+    "publication inconsistencies remain represented and reported"
+  ],
+  "faults": [
+    "changed snapshot digest",
+    "unknown schema or noninteger identity",
+    "WAL main-file input",
+    "partial or duplicate publication",
+    "file size grows after stat"
+  ],
+  "oracles": [
+    "frozen file digests and per-table row counts",
+    "existing regression expectations"
+  ],
+  "implementation_anchors": [
+    "kctl/source_preflight.py:preflight",
+    "kctl/source_preflight.py:_report",
+    "tests/test_source_preflight.py:test_covers_all_rows_and_newer_local_shapes_without_leaking_content",
+    "tests/test_source_preflight.py:test_non_integer_primary_key_identities_are_refused_before_diagnostics"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario"
+  ]
+}
