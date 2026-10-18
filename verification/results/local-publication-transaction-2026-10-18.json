@@ -1,0 +1,100 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "kctl.knowledge.local-publication",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-lifecycle",
+    "revision": "sha256:9d3d01b28b6080af4dbb3aee25be51c4d1aceb5ed34eba86d7181117cb838470"
+  },
+  "implementation_sha": "6f44bff33959f8ae4bb8699ef4d0390c4ef88442",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary-local-SQLite",
+    "isolation": "one publisher; SQLite BEGIN IMMEDIATE; separate child process for abrupt exit with no concurrent writer",
+    "tool_versions": {
+      "python": "3.13.16",
+      "sqlite": "3.53.1",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "histories": 19,
+    "bounds": {
+      "write_steps": 3,
+      "exception_cases": 6,
+      "abrupt_process_exit_cases": 3,
+      "targeted_tests_passed": 91,
+      "full_suite_passed": 203,
+      "full_suite_skipped": 4
+    },
+    "faults_exercised": [
+      "exception after entry insertion",
+      "exception after supersession update",
+      "exception after candidate transition",
+      "KeyboardInterrupt at each write step",
+      "abrupt process exit at each write step",
+      "injected failure before SQLite commit",
+      "historical partial or duplicate publication",
+      "supersession target already replaced"
+    ]
+  },
+  "claims": [
+    {
+      "property": "local entry insertion, supersession and candidate transition leave no committed prefix when interrupted before commit",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_publication_transaction.py:test_publication_fault_rolls_back_and_retry_converges: RuntimeError and KeyboardInterrupt injected after each of three writes; complete SQLite dump unchanged",
+        "tests/test_publication_transaction.py:test_process_exit_before_commit_leaves_no_publication_prefix: os._exit(71) after each of three writes; durable state unchanged and retry creates one new publication",
+        "tests/test_publication_transaction.py:test_commit_failure_rolls_back_before_retry: failure injected before underlying SQLite commit"
+      ]
+    },
+    {
+      "property": "publication preserves original reviewer, review timestamp and review notes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_publication_transaction.py:test_publish_preserves_review_evidence: complete candidate row differs only by approved-to-published status; entry has separate publication timestamp"
+      ]
+    },
+    {
+      "property": "historical partial or duplicate publications and inconsistent supersession targets are refused without repair",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_publication_transaction.py:test_historical_inconsistency_is_rejected_without_repair: approved with one/two entries and published with zero/two entries",
+        "tests/test_publication_transaction.py:test_historical_partial_supersession_target_is_rejected",
+        "tests/test_publication_transaction.py:test_cli_reports_historical_partial_publication"
+      ]
+    },
+    {
+      "property": "publication refuses active caller transactions and leaves existing supersession links unchanged after refusal",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_publication_transaction.py:test_publication_does_not_take_over_a_caller_transaction",
+        "tests/test_publication_transaction.py:test_supersession_refusal_does_not_leave_a_new_entry"
+      ]
+    },
+    {
+      "property": "existing local publication, review, transfer and full available suite remain compatible",
+      "result": "example-tested",
+      "evidence": [
+        "targeted publication/review/transfer/protocol suite: 91 passed",
+        "uv run --frozen pytest -q --basetemp /var/tmp/kctl-publication-full-20261018: 203 passed, 4 skipped in 22.18s"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair, ordinary publication changed reviewed_by reviewer to publish, replaced review timestamp with publication time, and cleared original review notes.",
+      "trace_ref": "tests/test_publication_transaction.py:test_publish_preserves_review_evidence"
+    },
+    {
+      "summary": "Before repair, an injected failure after insert_entry left a committed entry for an approved candidate; SQLite dump differed after failure.",
+      "trace_ref": "tests/test_publication_transaction.py:test_publication_fault_rolls_back_and_retry_converges"
+    }
+  ],
+  "notes": [
+    "Deterministic bounded example histories establish scoped Depth1 evidence; no generated reference-model, exhaustive protocol proof, concurrent-writer guarantee or central/PostgreSQL verification is claimed.",
+    "The three abrupt child exits test SQLite rollback during local publication; process exit occurs before commit and does not establish outcomes for a commit that completed without a response.",
+    "A committed publication remains a terminal transition. Repeated publish is refused; caller must inspect an unknown outcome. Historical inconsistent rows are neither deleted nor rewritten.",
+    "The test basetemp lies outside /tmp because an unrelated host /tmp/.git makes the existing outside-repository render test resolve project tmp. The first targeted run observed that unrelated failure; the isolated /var/tmp run passed.",
+    "No central schema, package pin, version, service, shared artifact or sprintctl state change."
+  ]
+}
