@@ -40,7 +40,24 @@ Invalid transitions must leave the candidate unchanged.
 
 Publication requires an approved candidate, valid category, and valid optional supersession target. It creates a knowledge entry, may update an older entry's `superseded_by`, and transitions the candidate to `published`.
 
-These writes currently commit separately. A crash can therefore leave an entry created while its candidate remains `approved`, or leave supersession updated before the candidate transition. Retrying publication is not guaranteed idempotent. Until the implementation changes, recovery is inspect-and-reconcile rather than blind retry.
+Local publication owns one SQLite transaction, beginning before candidate and
+supersession-target validation. Entry insertion, optional supersession update,
+and candidate transition commit together. A failure or process exit before
+commit leaves no committed prefix; after rollback/reopen the approved candidate
+can be published again. The connection must have no active caller transaction;
+publication refuses one without committing or rolling back unrelated work.
+
+Publication preserves the candidate's original `reviewed_by`, `reviewed_at`,
+and `review_notes`. The entry's `created_at` records publication time separately.
+
+A committed publication remains terminal. Repeating its publish command is
+refused; this is not command-level idempotency. If a response is lost after
+commit, inspect the candidate and its entry before deciding the next action.
+Historical partial or duplicate publication state is never automatically
+repaired: a non-published candidate with entries, or a published candidate
+without exactly one entry, is refused when publishing that candidate or using
+one of its entries as a supersession target. The error requires explicit
+reconciliation. Unrelated historical rows are not scanned or rewritten.
 
 ## Projection semantics
 
@@ -67,6 +84,8 @@ its status, never as a side effect of exporting or reading the artifact.
   ordinal cursor is never a watermark.
 - Candidate status follows only the declared transition graph.
 - Only approved candidates are eligible for publication.
+- Local publication commits its entry, supersession link, and candidate status
+  together and retains original review evidence.
 - A supersession target exists and cannot be the new entry itself.
 - Rendered knowledge includes only state permitted by the selected published stream.
 - The knowledge-artifact/v1 snapshot contains one record per published entry
@@ -77,7 +96,9 @@ its status, never as a side effect of exporting or reading the artifact.
 - No concurrent-writer progress or fairness guarantee is made.
 - Extraction progresses when invoked and the source remains readable. Remote extraction uses a transaction-default read-only connection and never bootstraps or writes sprintctl schema or state. Served extraction invokes only the read catalog operation above and likewise never writes sprintctl state.
 - Partial extraction converges on rerun through source-event deduplication.
-- Partial publication requires explicit reconciliation; blind retry is unsafe.
+- Failure before a publication commit leaves the candidate eligible for retry.
+  An unknown outcome after commit requires inspection, and historical partial
+  publication requires explicit reconciliation; blind retry is unsafe.
 - An interrupted artifact export preserves either the previous complete
   snapshot or a subsequent complete replacement; it never requires lifecycle
   repair.

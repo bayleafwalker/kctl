@@ -20,11 +20,12 @@ def test_knowledge_context_records_restart_and_publication_faults():
     ).hexdigest()
 
 
-def test_protocol_document_does_not_overclaim_publication_atomicity():
+def test_protocol_document_bounds_local_publication_atomicity():
     protocol = (ROOT / "docs/protocols/knowledge-lifecycle.md").read_text(encoding="utf-8")
 
-    assert "These writes currently commit separately" in protocol
-    assert "Retrying publication is not guaranteed idempotent" in protocol
+    assert "Local publication owns one SQLite transaction" in protocol
+    assert "this is not command-level idempotency" in protocol
+    assert "Historical partial or duplicate publication state is never automatically" in protocol
 
 
 def test_protocol_document_keeps_artifact_export_read_only():

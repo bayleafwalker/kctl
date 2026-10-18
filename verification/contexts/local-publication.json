@@ -1,0 +1,97 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.local-publication",
+  "owner_repo": "kctl",
+  "subject": "local-publication-transaction-and-review-evidence",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-lifecycle",
+    "revision": "sha256:9d3d01b28b6080af4dbb3aee25be51c4d1aceb5ed34eba86d7181117cb838470"
+  },
+  "source_of_truth": "local-SQLite-candidate-entry-and-supersession",
+  "depth": 1,
+  "backends": [
+    "sqlite"
+  ],
+  "actors": [
+    "publisher"
+  ],
+  "initial_state": [
+    "temporary store containing approved candidates and optional prior published entry"
+  ],
+  "operations": [
+    {
+      "name": "publish",
+      "actors": [
+        "publisher"
+      ],
+      "synchronization": "one-local-SQLite-transaction"
+    },
+    {
+      "name": "retry-after-reopen",
+      "actors": [
+        "publisher"
+      ]
+    },
+    {
+      "name": "inspect-historical-inconsistency",
+      "actors": [
+        "publisher"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "candidate-publication-and-supersession"
+  },
+  "assumptions": {
+    "isolation": "single-writer SQLite BEGIN IMMEDIATE",
+    "clock": "fixed supplied review and publication timestamps",
+    "fairness": "none"
+  },
+  "bounds": {
+    "deterministic_cases": 19,
+    "abrupt_process_exit_cases": 3,
+    "mutation_points": 3,
+    "simultaneous_writers": 1
+  },
+  "invariants": [
+    "publication has no committed prefix before its commit",
+    "original reviewer timestamp and notes remain unchanged",
+    "retry after rollback creates one entry and one published transition",
+    "committed publication remains terminal",
+    "historical inconsistencies are refused without rewriting rows",
+    "active caller transaction is left untouched"
+  ],
+  "faults": [
+    "exception after entry insertion",
+    "exception after supersession update",
+    "exception after candidate transition",
+    "KeyboardInterrupt at each write step",
+    "abrupt process exit at each write step",
+    "injected failure before SQLite commit",
+    "historical partial or duplicate publication",
+    "supersession target already replaced"
+  ],
+  "oracles": [
+    "SQLite dump equality on refusal or rollback",
+    "reopened candidate and entry counts",
+    "original reviewer fields equality",
+    "original supersession target unchanged on failure",
+    "subprocess exit status and invariant query",
+    "CLI refusal diagnostics"
+  ],
+  "implementation_anchors": [
+    "kctl/publish.py:publish_candidate",
+    "kctl/publish.py:_check_publication",
+    "kctl/db.py:insert_entry",
+    "kctl/db.py:transition_candidate",
+    "kctl/db.py:set_entry_superseded_by",
+    "tests/test_publication_transaction.py:test_publication_fault_rolls_back_and_retry_converges",
+    "tests/test_publication_transaction.py:test_process_exit_before_commit_leaves_no_publication_prefix"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}

@@ -18,7 +18,9 @@
 - Crash after some candidate inserts but before watermark update converges on rerun.
 - Invalid candidate transitions leave state unchanged.
 - Publication rejects non-approved candidates and missing supersession targets.
-- Crash between entry insertion, supersession update, and candidate publication is detected and reconcilable.
+- Failure or process exit between entry insertion, supersession update, and candidate publication leaves no committed prefix; retry after rollback publishes once.
+- Original reviewer, review timestamp, and review notes survive publication unchanged.
+- Historical partial or duplicate publications are refused without mutation or automatic reconciliation.
 - Repeated rendering over stable published state is deterministic modulo explicitly documented timestamps.
 - Concurrent deployment migrations serialize, validate immutable checksums, and apply each version once.
 - Local transfer retries preserve candidate/publication digests and Git revisions without storing published document bodies centrally.
@@ -28,7 +30,7 @@
 
 - kctl does not claim safe concurrent writers across processes.
 - Candidate insertion and watermark updates use separate commits but source-event uniqueness makes extraction restartable.
-- Publication currently performs entry insertion, optional supersession, and candidate transition through separate commits. Do not claim atomic publication or retry idempotency.
+- Local publication owns one SQLite transaction for entry insertion, optional supersession, and candidate transition. It refuses an active caller transaction. A committed publication is terminal and a repeated command is refused; do not claim command retry idempotency or automatic historical repair.
 - Central import is an explicit rollout/recovery operation, not continuous local/central dual authority.
 
 Use temporary SQLite databases. Record the extraction scope key, source event range, injected interruption point, and resulting candidate/entry sets.
