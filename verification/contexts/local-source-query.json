@@ -1,0 +1,67 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.local-source-query",
+  "owner_repo": "kctl",
+  "subject": "local-extraction-query-reuse",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-lifecycle",
+    "revision": "sha256:9d3d01b28b6080af4dbb3aee25be51c4d1aceb5ed34eba86d7181117cb838470"
+  },
+  "source_of_truth": "sqlite-source-and-local-knowledge-store",
+  "depth": 1,
+  "backends": [
+    "sqlite"
+  ],
+  "actors": [
+    "extractor"
+  ],
+  "initial_state": [
+    "disposable synthetic source and temporary local stores"
+  ],
+  "operations": [
+    {
+      "name": "extract-with-local-connection-or-source",
+      "actors": [
+        "extractor"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "local-extraction-query-reuse"
+  },
+  "assumptions": {
+    "isolation": "single writer; disposable local fixtures",
+    "clock": "fixed test timestamps",
+    "fairness": "not-applicable"
+  },
+  "bounds": {
+    "targeted_tests": 28
+  },
+  "invariants": [
+    "raw local connections and source wrappers share one owning query",
+    "event filters and ordering remain unchanged",
+    "source-event deduplication and scoped watermarks remain unchanged",
+    "caller retains ownership of its connection"
+  ],
+  "faults": [
+    "repeated extraction",
+    "filtered event types and sprint scopes",
+    "unavailable remote or served source"
+  ],
+  "oracles": [
+    "candidate source-event identities and insertion counts",
+    "scoped extractor watermark values",
+    "existing source query and served-client regression expectations"
+  ],
+  "implementation_anchors": [
+    "kctl/extract.py:extract_candidates",
+    "kctl/source.py:LocalSprintctlSource.fetch_events",
+    "tests/test_extract.py:test_extract_scope_watermark_isolated_by_event_types",
+    "tests/test_extract.py:test_extract_scope_watermark_isolated_by_sprint"
+  ],
+  "expansions": [
+    "stateful-test",
+    "fault-scenario"
+  ]
+}

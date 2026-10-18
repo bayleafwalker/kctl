@@ -1,0 +1,55 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "kctl.knowledge.local-source-query",
+  "contract_ref": {
+    "doc_id": "kctl.knowledge-lifecycle",
+    "revision": "sha256:9d3d01b28b6080af4dbb3aee25be51c4d1aceb5ed34eba86d7181117cb838470"
+  },
+  "implementation_sha": "56239b8274420b790afb6ed39c58eb6348abae51",
+  "depth": 1,
+  "environment": {
+    "backend": "temporary-local-sqlite",
+    "isolation": "single writer; synthetic snapshots and isolated knowledge stores",
+    "tool_versions": {
+      "python": "3.13.16",
+      "sqlite": "3.53.1",
+      "pytest": "9.0.2"
+    }
+  },
+  "execution": {
+    "histories": 0,
+    "bounds": {
+      "targeted_tests": 28,
+      "full_suite_passed": 203,
+      "full_suite_skipped": 4
+    },
+    "faults_exercised": [
+      "repeated extraction",
+      "filtered event types and sprint scopes",
+      "unavailable remote or served source"
+    ]
+  },
+  "claims": [
+    {
+      "property": "query consolidation preserves existing extraction and local/remote source contracts",
+      "result": "example-tested",
+      "evidence": [
+        "uv run --frozen pytest tests/test_extract.py tests/test_remote_source.py -q: 28 passed",
+        "Existing scope-isolation, duplicate-extraction, ordering and served-source tests are retained."
+      ]
+    },
+    {
+      "property": "the refactor and merged publication repair pass the available complete suite",
+      "result": "example-tested",
+      "evidence": [
+        "uv run --frozen pytest -q --basetemp <fresh /var/tmp directory>: 203 passed, 4 skipped"
+      ]
+    }
+  ],
+  "counterexamples": [],
+  "notes": [
+    "Evidence consists of deterministic example tests; no generated reference model, retained concurrent histories, formal proof or PostgreSQL verification is claimed.",
+    "No production artifacts, services, central schema, package versions, dependency pins or historical source records were changed.",
+    "Optimistic planner reviewed query equivalence and caller connection ownership with no blocking findings."
+  ]
+}
