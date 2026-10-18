@@ -82,6 +82,12 @@ artifact creation also refuses non-finite content. The exporter enforces the
 same byte bound before replacing an existing snapshot. Valid artifact digests
 and canonical bytes retain their existing format.
 
+For coverage of a frozen local schema-9 store, including adopted candidates and
+tenet/direction entries outside transfer-v1's vocabulary, use the separate
+[read-only frozen source preflight](../protocols/frozen-source-preflight.md).
+It covers source bytes and reports inconsistencies without importing or
+modifying them; it does not expand this central destination contract.
+
 This is recovery/import validation for the existing knowledge schema. It does
 not qualify TS-13 lesson migration, authorize S4 cutover, or replace Git-owned
 published content.
