@@ -122,30 +122,13 @@ def extract_candidates(
             sprint_id=sprint_id,
         )
     else:
-        placeholders = ",".join("?" * len(event_types))
-        params: list = [since_event_id, *event_types]
-
-        sprint_filter = ""
-        if sprint_id is not None:
-            sprint_filter = " AND e.sprint_id = ?"
-            params.append(sprint_id)
-
-        query = f"""
-            SELECT
-                e.id, e.sprint_id, e.work_item_id, e.source_type, e.actor,
-                e.event_type, e.payload, e.created_at,
-                wi.title AS item_title,
-                t.name   AS track_name
-            FROM event e
-            LEFT JOIN work_item wi ON e.work_item_id = wi.id
-            LEFT JOIN track t      ON wi.track_id = t.id
-            WHERE e.id > ?
-              AND e.event_type IN ({placeholders})
-              {sprint_filter}
-            ORDER BY e.id ASC
-        """
-
-        events = sprintctl_conn.execute(query, params).fetchall()
+        # Both entry points use the local source's one owning read query. The
+        # caller retains connection ownership; this wrapper is never closed here.
+        events = LocalSprintctlSource(Path(sprintctl_db_path), sprintctl_conn).fetch_events(
+            since_event_id=since_event_id,
+            event_types=event_types,
+            sprint_id=sprint_id,
+        )
 
     created = []
     structured_count = 0
