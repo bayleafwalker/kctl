@@ -5,7 +5,7 @@
   "subject": "central-knowledge-review-and-publication-reference",
   "contract_ref": {
     "doc_id": "kctl.central-knowledge-workflow",
-    "revision": "sha256:8d6cdea6d01719b0f9c853ec6edb36ced34dc809358dc19fa1ae7a7bb5129429"
+    "revision": "sha256:5f41b68817fcaf3492f078e1a1c0c93ed2a917e39bcb200054738276e6d4e2d2"
   },
   "source_of_truth": "postgresql-knowledge-workflow-plus-git-published-content",
   "depth": 2,

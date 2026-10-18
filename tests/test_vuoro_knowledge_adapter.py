@@ -103,6 +103,27 @@ def test_catalog_is_domain_owned_strict_and_excludes_document_authority() -> Non
     )
 
 
+def test_publication_result_categories_cover_storage_without_widening_inputs() -> None:
+    specs = {spec["name"]: spec for spec in catalog_operation_specs()}
+    legacy = {"decision", "pattern", "lesson", "risk", "reference"}
+    stored = legacy | {"tenet", "direction"}
+    record = specs["knowledge.publication-reference.record"]
+    listing = specs["knowledge.publication-reference.list"]
+    showing = specs["knowledge.publication-reference.show"]
+    superseding = specs["knowledge.publication-reference.supersede"]
+    assert set(record["input_schema"]["properties"]["publication"]["properties"]["category"]["enum"]) == legacy
+    assert set(listing["input_schema"]["properties"]["category"]["oneOf"][0]["enum"]) == legacy
+    results = [
+        record["result_schema"]["properties"]["publication"],
+        listing["result_schema"]["properties"]["publications"]["items"],
+        showing["result_schema"]["properties"]["publication"]["oneOf"][0],
+        superseding["result_schema"]["properties"]["predecessor"],
+        superseding["result_schema"]["properties"]["successor"],
+    ]
+    for result in results:
+        assert set(result["properties"]["category"]["enum"]) == stored
+
+
 def test_catalog_specs_are_fresh_data_and_handlers_register_without_vuoro() -> None:
     first = catalog_operation_specs()
     first[0]["input_schema"]["properties"].clear()
@@ -127,7 +148,7 @@ def test_catalog_wire_hash_is_stable() -> None:
     ]
     payload = json.dumps(wire_specs, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(payload).hexdigest() == (
-        "8fb31046ebcfc6f3c107e1a5cc0c7564d1b676249bf5b6da587cf8089f492abd"
+        "8835773a56eaae46f61c70997c5d2f99af8ed681d504a688638d0b336608ad06"
     )
 
 

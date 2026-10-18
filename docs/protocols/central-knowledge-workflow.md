@@ -66,6 +66,21 @@ columns, recorded role and environment, and that the runtime principal is not
 a superuser, owner, owner-role member, schema creator, or migration-ledger
 writer. Compatibility never creates a schema or runs a migration.
 
+Runtime compatibility supports installed schema versions 3 and 4. Schema 3
+retains the five original stored publication categories; existing migration 4
+adds `tenet` and `direction` to that database CHECK. Compatibility checks the
+stored category vocabulary for the installed version while retaining the same
+ledger, checksum, relation, index, foreign-key, role and environment checks.
+Future schema versions remain incompatible.
+
+This schema range does not widen the application write/filter or transfer-v1
+category vocabulary. Existing schema-4 `tenet` and `direction` rows remain
+visible through unfiltered publication reads and show operations; explicit
+writes, filters and transfer-v1 artifacts using those categories are still
+refused. Publication result schemas describe all seven stored categories,
+including publication rows returned by supersession responses. Creation and
+filter input schemas retain the original five categories.
+
 ## Transfer and retry semantics
 
 `python -m kctl.central_schema export-local` reads an existing SQLite file in read-only
@@ -124,9 +139,9 @@ registry, service, and client restart.
 List operations enforce a maximum of 100 rows in the application core as well
 as in catalog schemas. Recreating the application or service does not alter
 retry identity because candidate, review, and publication rows are the durable
-evidence. This central atomicity does not change or silently repair the legacy
-SQLite publication path, whose separate-commit recovery limitation remains as
-documented in `knowledge-lifecycle.md`.
+evidence. This central atomicity is separate from the local SQLite publication
+transaction and its historical-reconciliation limits documented in
+`knowledge-lifecycle.md`.
 
 ## Environment isolation and rollback
 
