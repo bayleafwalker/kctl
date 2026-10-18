@@ -73,6 +73,19 @@ python -m kctl.central_schema export-local \
 python -m kctl.central_schema validate-artifact /secure/path/kctl-central-transfer.json
 ```
 
+Transfer artifacts are bounded to 64 MiB of UTF-8 JSON, including the final
+newline written by the exporter. Validation reads explicit regular files with
+no-follow and nonblocking opens; symlinks and FIFOs are refused. Duplicate JSON
+object keys, non-finite numbers (including exponent overflow), malformed UTF-8
+and parser nesting failures return a transfer validation error. Programmatic
+artifact creation also refuses non-finite content. The exporter enforces the
+same byte bound before replacing an existing snapshot. Valid artifact digests
+and canonical bytes retain their existing format.
+
+This is recovery/import validation for the existing knowledge schema. It does
+not qualify TS-13 lesson migration, authorize S4 cutover, or replace Git-owned
+published content.
+
 Import with the runtime identity after migration:
 
 ```bash

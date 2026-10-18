@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
+import stat
 import tempfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
@@ -25,6 +27,7 @@ from . import proposal as _proposal
 
 
 SCHEMA_VERSION = "kctl-central-transfer/v1"
+_MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
 GIT_REVISION_RE = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
 DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 TRANSFER_NAMESPACE = UUID("573e2b2b-b2d6-43bd-8ec8-af519c74521c")
@@ -39,12 +42,44 @@ class TransferConflictError(RuntimeError):
 
 
 def _canonical(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (ValueError, TypeError, UnicodeError, RecursionError) as exc:
+        raise TransferArtifactError("artifact content must be finite UTF-8 JSON") from exc
+
+
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise TransferArtifactError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
+def _finite_number(raw: str) -> float:
+    value = float(raw)
+    if not math.isfinite(value):
+        raise TransferArtifactError("JSON numbers must be finite")
+    return value
+
+
+def _decode_json(raw: str) -> Any:
+    try:
+        return json.loads(
+            raw, object_pairs_hook=_unique_object,
+            parse_constant=_finite_number, parse_float=_finite_number,
+        )
+    except TransferArtifactError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise TransferArtifactError("invalid transfer JSON") from exc
 
 
 def _artifact_digest(value: dict[str, Any]) -> str:
@@ -115,8 +150,8 @@ def _json_value(value: Any, field: str) -> Any:
     if not isinstance(value, str):
         return value
     try:
-        return json.loads(value)
-    except json.JSONDecodeError as exc:
+        return _decode_json(value)
+    except TransferArtifactError as exc:
         raise TransferArtifactError(f"{field} must contain valid JSON") from exc
 
 
@@ -287,17 +322,16 @@ def build_artifact(
 def write_artifact(path: Path, value: dict[str, Any]) -> None:
     """Atomically replace one mode-0600 transfer artifact after validation."""
     validate_artifact(value)
+    payload = _canonical(value) + b"\n"
+    if len(payload) > _MAX_ARTIFACT_BYTES:
+        raise TransferArtifactError("transfer artifact exceeds the 64 MiB byte bound")
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = (
-        json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-        + "\n"
-    )
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, text=True
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
     )
     temporary_path = Path(temporary_name)
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        with os.fdopen(descriptor, "wb") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
@@ -314,11 +348,36 @@ def write_artifact(path: Path, value: dict[str, Any]) -> None:
             temporary_path.unlink()
 
 
+def _read_regular_artifact(path: Path) -> bytes:
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_NONBLOCK"):
+        raise TransferArtifactError("platform lacks safe regular file opens")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise TransferArtifactError("transfer input must be a regular file")
+        if metadata.st_size > _MAX_ARTIFACT_BYTES:
+            raise TransferArtifactError("transfer artifact exceeds the 64 MiB byte bound")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = None
+            raw = handle.read(_MAX_ARTIFACT_BYTES + 1)
+        if len(raw) > _MAX_ARTIFACT_BYTES:
+            raise TransferArtifactError("transfer artifact exceeds the 64 MiB byte bound")
+        return raw
+    except OSError as exc:
+        raise TransferArtifactError("transfer input is unavailable or not a safe regular file") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def read_artifact(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise TransferArtifactError(f"could not read transfer artifact: {exc}") from exc
+        value = _decode_json(_read_regular_artifact(path).decode("utf-8"))
+    except UnicodeError as exc:
+        raise TransferArtifactError("transfer artifact must be UTF-8 JSON") from exc
     if not isinstance(value, dict):
         raise TransferArtifactError("transfer artifact must be a JSON object")
     validate_artifact(value)
