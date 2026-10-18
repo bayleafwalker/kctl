@@ -445,6 +445,8 @@ def transition_candidate(
     title: str | None = None,
     detail: str | None = None,
     tags: str | None = None,
+    *,
+    commit: bool = True,
 ) -> dict:
     """
     Transition a candidate's status. Enforces valid transitions.
@@ -479,13 +481,14 @@ def transition_candidate(
     conn.execute(
         f"UPDATE knowledge_candidate SET {set_clauses} WHERE id = ?", params
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_candidate(conn, candidate_id)
 
 
 # --- KnowledgeEntry ---
 
-def insert_entry(conn: sqlite3.Connection, entry: dict) -> int:
+def insert_entry(conn: sqlite3.Connection, entry: dict, *, commit: bool = True) -> int:
     cur = conn.execute(
         """
         INSERT INTO knowledge_entry
@@ -504,7 +507,8 @@ def insert_entry(conn: sqlite3.Connection, entry: dict) -> int:
             entry["created_at"],
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return cur.lastrowid
 
 
@@ -590,6 +594,8 @@ def set_entry_superseded_by(
     conn: sqlite3.Connection,
     entry_id: int,
     superseded_by: int,
+    *,
+    commit: bool = True,
 ) -> None:
     if entry_id == superseded_by:
         raise ValueError("An entry cannot supersede itself")
@@ -611,7 +617,8 @@ def set_entry_superseded_by(
         "UPDATE knowledge_entry SET superseded_by = ? WHERE id = ?",
         (superseded_by, entry_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 # --- Schema validation for sprintctl DB ---

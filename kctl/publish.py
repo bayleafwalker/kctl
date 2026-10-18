@@ -28,7 +28,52 @@ def publish_candidate(
     supersedes_entry_id: int | None = None,
     coordination: bool = False,
 ) -> dict:
-    """Promote an approved candidate to a knowledge_entry."""
+    """Publish in one local transaction, retaining the original review evidence.
+
+    The caller must provide an idle connection: this command owns its commit
+    and rollback and must never take over unrelated caller writes.
+    """
+    if conn.in_transaction:
+        raise ValueError("Cannot publish inside an active transaction")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        entry = _publish_candidate(
+            conn, candidate_id, title, body, category, tags, now,
+            supersedes_entry_id, coordination,
+        )
+        conn.commit()
+        return entry
+    except BaseException:
+        conn.rollback()
+        raise
+
+
+def _check_publication(conn: sqlite3.Connection, candidate: dict) -> None:
+    """Refuse historical partial/duplicate state without rewriting its evidence."""
+    count = conn.execute(
+        "SELECT COUNT(*) FROM knowledge_entry WHERE candidate_id = ?",
+        (candidate["id"],),
+    ).fetchone()[0]
+    expected = 1 if candidate["status"] == "published" else 0
+    if count != expected:
+        raise ValueError(
+            f"Candidate #{candidate['id']} has inconsistent publication "
+            f"(status {candidate['status']}, {count} entries); "
+            "explicit reconciliation is required"
+        )
+
+
+def _publish_candidate(
+    conn: sqlite3.Connection,
+    candidate_id: int,
+    title: str | None,
+    body: str,
+    category: str,
+    tags: str | None,
+    now: str,
+    supersedes_entry_id: int | None,
+    coordination: bool,
+) -> dict:
     if category not in VALID_CATEGORIES:
         raise ValueError(
             f"Invalid category '{category}'. Must be one of: {', '.join(sorted(VALID_CATEGORIES))}"
@@ -47,6 +92,7 @@ def publish_candidate(
     candidate = _db.get_candidate(conn, candidate_id)
     if candidate is None:
         raise ValueError(f"Candidate #{candidate_id} not found")
+    _check_publication(conn, candidate)
     candidate_kind = candidate.get("candidate_kind", "durable")
     if candidate_kind == "coordination" and not coordination:
         raise ValueError(
@@ -56,8 +102,17 @@ def publish_candidate(
         raise ValueError(
             f"Candidate #{candidate_id} is '{candidate['status']}' — only approved candidates can be published"
         )
-    if supersedes_entry_id is not None and _db.get_entry(conn, supersedes_entry_id) is None:
-        raise ValueError(f"Entry #{supersedes_entry_id} not found")
+    if supersedes_entry_id is not None:
+        target = _db.get_entry(conn, supersedes_entry_id)
+        if target is None:
+            raise ValueError(f"Entry #{supersedes_entry_id} not found")
+        target_candidate = _db.get_candidate(conn, target["candidate_id"])
+        if target_candidate is None:
+            raise ValueError(
+                f"Entry #{supersedes_entry_id} has inconsistent publication "
+                "(missing candidate); explicit reconciliation is required"
+            )
+        _check_publication(conn, target_candidate)
 
     effective_title = title or candidate["summary"]
     if not effective_title:
@@ -78,17 +133,19 @@ def publish_candidate(
         "source_kind": candidate_kind,
         "created_at": now,
     }
-    entry_id = _db.insert_entry(conn, entry)
+    entry_id = _db.insert_entry(conn, entry, commit=False)
     if supersedes_entry_id is not None:
-        _db.set_entry_superseded_by(conn, supersedes_entry_id, entry_id)
+        _db.set_entry_superseded_by(conn, supersedes_entry_id, entry_id, commit=False)
 
     # Transition candidate to published
     _db.transition_candidate(
         conn,
         candidate_id=candidate_id,
         new_status="published",
-        reviewed_at=now,
-        reviewed_by="publish",
+        reviewed_at=candidate["reviewed_at"],
+        reviewed_by=candidate["reviewed_by"],
+        review_notes=candidate["review_notes"],
+        commit=False,
     )
 
     return _db.get_entry(conn, entry_id)

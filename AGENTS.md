@@ -33,7 +33,7 @@ The governing protocol draft is `docs/protocols/knowledge-lifecycle.md`; repo-sp
 
 Use the shared `verify-state-protocols` skill when changes affect extraction watermarks, source-event deduplication, candidate transitions, publication, supersession, or rendering. Default to Depth 1. Escalate to Depth 2 only if concurrent writers or independent processes become supported.
 
-Use `survey` and `reconcile` read-only. Verification may add tests and model artifacts but must not silently repair lifecycle semantics. Preserve current limitations in reports: extraction is restartable through source-event deduplication, while publication currently spans multiple SQLite commits and is not an atomic or idempotent command.
+Use `survey` and `reconcile` read-only. Verification may add tests and model artifacts but must not silently repair lifecycle semantics. Extraction is restartable through source-event deduplication. Local publication commits entry insertion, optional supersession, and candidate transition in one SQLite transaction while preserving original review evidence. A committed publication remains a terminal transition, not an idempotent command; historical partial or duplicate publications require explicit reconciliation and are never automatically repaired. No concurrent-writer guarantee is made.
 
 The machine-readable routing and hook policy is `kctl.dispatch.json`. Validate reusable packets with `python /projects/dev/agentops/scripts/validate_verification_artifacts.py --root .`.
 

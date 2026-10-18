@@ -5,7 +5,7 @@
   "subject": "knowledge-candidate-and-entry",
   "contract_ref": {
     "doc_id": "kctl.knowledge-lifecycle",
-    "revision": "sha256:ff07bfc53dc19c8bc9c1d5ad24d629b57ee69ed1c90710c782f9452f55d49fb4"
+    "revision": "sha256:9d3d01b28b6080af4dbb3aee25be51c4d1aceb5ed34eba86d7181117cb838470"
   },
   "source_of_truth": "sqlite-knowledge-store",
   "depth": 1,
@@ -15,7 +15,7 @@
   "operations": [
     { "name": "extract", "actors": ["extractor"], "synchronization": "sequential-model-step" },
     { "name": "approve-or-reject", "actors": ["reviewer"], "synchronization": "sequential-model-step" },
-    { "name": "publish", "actors": ["publisher"], "synchronization": "fault-hook-between-commits" },
+    { "name": "publish", "actors": ["publisher"], "synchronization": "single-local-sqlite-transaction-with-faults-before-commit" },
     { "name": "render", "actors": ["publisher"], "synchronization": "after-state-transition" },
     { "name": "export-published-artifact", "actors": ["publisher"], "synchronization": "single-writer-atomic-replace" },
     { "name": "export-approved-proposal", "actors": ["publisher"], "synchronization": "single-writer-atomic-replace" }
@@ -29,6 +29,9 @@
     "remote-extraction-never-writes-sprintctl",
     "candidate-transition-graph-holds",
     "only-approved-candidates-publish",
+    "publication-commits-entry-supersession-and-status-together",
+    "publication-preserves-original-review-evidence",
+    "historical-partial-publication-is-refused-without-repair",
     "render-is-a-projection-of-published-state",
     "knowledge-artifact-is-a-projection-of-published-state",
     "knowledge-proposal-is-a-projection-of-approved-unpublished-state",
