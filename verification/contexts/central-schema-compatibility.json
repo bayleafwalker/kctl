@@ -5,7 +5,7 @@
   "subject": "versioned-central-schema-read-only-compatibility",
   "contract_ref": {
     "doc_id": "kctl.central-knowledge-workflow",
-    "revision": "sha256:5f41b68817fcaf3492f078e1a1c0c93ed2a917e39bcb200054738276e6d4e2d2"
+    "revision": "sha256:26265bc2ff120a6c26b97a0541c61515332ecc5da43be06598076ee50278a916"
   },
   "source_of_truth": "PostgreSQL-catalogs-and-immutable-packaged-migration-ledger",
   "depth": 2,

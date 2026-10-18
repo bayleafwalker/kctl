@@ -13,7 +13,7 @@ Primary language: Python >= 3.11. Use `pytest` for testing. SQLite-backed local 
 | `KCTL_DB` | Override the database path (default: `~/.kctl/kctl.db`) |
 | `KCTL_PROJECT` | Project scope identifier |
 
-Validate that `KCTL_DB` points to the project-scoped database before use. Local mode has no cluster context. Served mode does: with `SPRINTCTL_BACKEND=served` and `SPRINTCTL_VUORO_PROFILE`, kctl reaches the deployed Vuoro knowledge domain for candidate intake and review, while publication, render, and export stay Git- and local-owned and fail with `served-operation-unavailable`.
+Validate that `KCTL_DB` points to the project-scoped database before use. Local mode has no cluster context. With `SPRINTCTL_BACKEND=served` and `SPRINTCTL_VUORO_PROFILE`, the retained client targets the legacy kctl candidate/review catalog. The deployed `knowledge` owner is Workspace (`vuoro-workspace/v1`), with different operations and no kctl bridge; do not infer intake/review availability from configured profiles or successful Sprintctl source diagnostics. Publication, render, and export stay Git- and local-owned and fail with `served-operation-unavailable` in served mode. See the current-owner links in `README.md`; kctl remains retiring with no new operations.
 
 ## Development workflow
 

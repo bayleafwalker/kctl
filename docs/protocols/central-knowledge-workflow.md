@@ -6,13 +6,33 @@ governing_decision: agentops/docs/plans/agentops/vuoro-served-substrate-plan.md
 
 # Central knowledge workflow contract
 
+## Legacy contract scope and current owner
+
+This document specifies the retained kctl `knowledge/v1` adapter, schema and
+recovery/import contract. It is an implementation reference, not a description
+of the currently deployed `knowledge` domain. The deployed owner is
+`vuoro-workspace/v1`; see its
+[composition contract](https://github.com/bayleafwalker/vuoro/blob/aa5af4de351f011c1d4f795eaa72b692c5dfcb47/docs/architecture/knowledge-workspace-composition.md)
+and [October 14 direction](https://github.com/bayleafwalker/vuoro/blob/aa5af4de351f011c1d4f795eaa72b692c5dfcb47/docs/plans/2026-10-14-knowledge-workspace-phase0.md).
+Kctl remains retiring with no new operations. Workspace uses its own
+revision/proposal and artifact-review lifecycles. Contributors prepare content
+and proposals; reviewers approve or reject them, subject to credential
+authorities and current membership, the agent contributor cap and the
+prohibition on reviewing one's own proposal.
+
+Legacy tables and evidence are retained separately. The commands, grants and
+catalog operations below describe the legacy contract when explicitly
+instantiated; they are not Workspace commands or a migration bridge. Neither
+these references nor the local verification evidence establishes caller grants,
+imports, a successful deployed intake, or a cutover.
+
 ## Authority boundary
 
-Kctl owns served candidate, review, supersession, and publication-reference
-semantics. The central PostgreSQL schema is authoritative for that shared
-workflow. Git remains authoritative for authored and published document
-content. The central schema therefore stores candidate content needed for
-review, but a publication stores only a repository-relative path, anchor,
+Within the legacy contract, kctl owns candidate, review, supersession, and
+publication-reference semantics. Its central PostgreSQL schema is authoritative
+for that workflow when explicitly instantiated. Git remains authoritative for
+authored and published document content. The central schema therefore stores
+candidate content needed for review, but a publication stores only a repository-relative path, anchor,
 full Git revision, and content digest. It has no published title or body
 column and cannot become a second document repository.
 

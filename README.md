@@ -11,6 +11,23 @@ kctl extracts two distinct streams from execution:
 > while that migration is pending; provider evaluation results are imported as evidence
 > through the substrate (TS-18), not through kctl.
 
+The deployed `knowledge` owner is now `vuoro-workspace`
+(`vuoro-workspace/v1`), as described in the
+[Workspace composition](https://github.com/bayleafwalker/vuoro/blob/aa5af4de351f011c1d4f795eaa72b692c5dfcb47/docs/architecture/knowledge-workspace-composition.md).
+The [October 14 direction](https://github.com/bayleafwalker/vuoro/blob/aa5af4de351f011c1d4f795eaa72b692c5dfcb47/docs/plans/2026-10-14-knowledge-workspace-phase0.md)
+keeps kctl retiring with no new operations. This repository retains the local
+CLI and legacy `knowledge/v1` adapter as implementation and recovery references;
+the retained adapter is not the deployed Workspace catalog. Legacy tables are
+preserved separately, and this CLI supplies no bridge or import into Workspace.
+
+Workspace contributors prepare drafts, artifacts and proposals; reviewers
+approve or reject them. Effective access is the intersection of credential
+authorities and current workspace membership. Agents are capped at contributor,
+and proposal authors cannot review their own proposals. The
+[composition authority rules](https://github.com/bayleafwalker/vuoro/blob/aa5af4de351f011c1d4f795eaa72b692c5dfcb47/docs/architecture/knowledge-workspace-composition.md#domain-binding)
+also define human reviewer credentials. This ownership description establishes
+no caller grants, membership or acceptance of an intake request.
+
 ## What kctl is
 
 - A tool for one developer or one sparse agentic session at a time
@@ -26,8 +43,9 @@ kctl extracts two distinct streams from execution:
 - Not a direct sprint seeding tool
 - Not a replacement for sprintctl's write-side command surface
 - Not a wiki, search engine, or documentation generator
-- Not a hosted publication store: served mode carries candidate intake and review;
-  publication, render, and export stay Git- and local-owned
+- Not a hosted publication store: the retained served client targets legacy
+  kctl candidate intake and review, not Workspace operations; publication,
+  render, and export stay Git- and local-owned
 - Not optimised for concurrent contributors across machines
 
 ## Two streams
@@ -161,6 +179,11 @@ the sprintctl schema. Its extraction watermark is keyed as
 the kctl database. The repo ID defaults to the current repository; set
 `KCTL_SPRINTCTL_REPO_ID` or pass `--sprintctl-repo-id` when reading another
 repository.
+
+The retained served source integration reads Sprintctl operations; it does not
+translate legacy kctl candidate intake/review into Workspace proposals. Source
+reads or successful diagnostics do not establish a working knowledge-intake
+route in the deployed Workspace catalog.
 
 For a served sprintctl source, install `kctl[served]` on Python 3.12+ and set
 `SPRINTCTL_BACKEND=served` plus `SPRINTCTL_VUORO_PROFILE` to the same
