@@ -123,9 +123,22 @@ PostgreSQL server binaries. Run the repository suite with:
 uv run --all-extras pytest
 ```
 
-The current GitHub Actions workflow installs only the `dev` extra, so it skips
-these critical tests; changing `.github/workflows/ci.yml` is outside the
-manifest-allowed roots for this item and remains follow-up CI debt.
+GitHub Actions runs the central integration module in its own job with the frozen `dev` and `remote` extras and runner-local PostgreSQL
+server binaries. The fixture creates and removes its own temporary cluster,
+roles and schemas; it never uses a configured service or production DSN. The
+ordinary Python matrix remains separate. A missing server binary fails the
+integration job instead of silently skipping the contract tests.
+
+To run the same module locally, put the installed PostgreSQL `bin` directory
+(containing `initdb` and `pg_ctl`) on `PATH`, then run:
+
+```bash
+uv sync --frozen --extra dev --extra remote
+uv run --frozen --extra dev --extra remote pytest -q tests/test_central_pg_integration.py
+```
+
+This job checks the runner-packaged PostgreSQL version; an exact production
+version rehearsal remains separate deployment evidence.
 
 ## Recovery
 

@@ -42,6 +42,37 @@ jobs:
       - name: Run test suite
         run: uv run pytest -q
 
+  central-postgres:
+    name: Central PostgreSQL contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kctl
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install disposable PostgreSQL test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql libpq-dev
+          kctl_pg_bin="$(pg_config --bindir)"
+          test -x "$kctl_pg_bin/initdb"
+          test -x "$kctl_pg_bin/pg_ctl"
+          "$kctl_pg_bin/initdb" --version
+          echo "$kctl_pg_bin" >> "$GITHUB_PATH"
+
+      - name: Sync frozen integration dependencies
+        run: uv sync --frozen --extra dev --extra remote
+
+      - name: Run central contracts against disposable local PostgreSQL
+        run: uv run --frozen --extra dev --extra remote pytest -q tests/test_central_pg_integration.py
+
   sprintctl-compat:
     name: Sprintctl Compatibility
     runs-on: ubuntu-latest
