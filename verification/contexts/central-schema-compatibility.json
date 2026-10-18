@@ -1,0 +1,124 @@
+{
+  "schema_version": "test-context/v1",
+  "id": "kctl.knowledge.central-schema-compatibility",
+  "owner_repo": "kctl",
+  "subject": "versioned-central-schema-read-only-compatibility",
+  "contract_ref": {
+    "doc_id": "kctl.central-knowledge-workflow",
+    "revision": "sha256:5f41b68817fcaf3492f078e1a1c0c93ed2a917e39bcb200054738276e6d4e2d2"
+  },
+  "source_of_truth": "PostgreSQL-catalogs-and-immutable-packaged-migration-ledger",
+  "depth": 2,
+  "backends": [
+    "disposable-postgresql"
+  ],
+  "actors": [
+    "migration-a",
+    "migration-b",
+    "runtime-a",
+    "runtime-b"
+  ],
+  "initial_state": [
+    "fresh disposable PostgreSQL cluster",
+    "installed schema3 or4 or explicitly injected catalog/ledger drift"
+  ],
+  "operations": [
+    {
+      "name": "migrate",
+      "actors": [
+        "migration-a",
+        "migration-b"
+      ],
+      "synchronization": "independent connections synchronized by thread barrier"
+    },
+    {
+      "name": "check-compatibility",
+      "actors": [
+        "runtime-a"
+      ],
+      "synchronization": "read-only transaction"
+    },
+    {
+      "name": "import-retry",
+      "actors": [
+        "runtime-a",
+        "runtime-b"
+      ],
+      "synchronization": "independent connections synchronized by thread barrier"
+    },
+    {
+      "name": "read-existing-publication",
+      "actors": [
+        "runtime-a"
+      ]
+    },
+    {
+      "name": "refuse-unsupported-category",
+      "actors": [
+        "runtime-a"
+      ]
+    }
+  ],
+  "consistency": {
+    "target": "application-invariant",
+    "object": "installed-schema-version-and-runtime-contract"
+  },
+  "assumptions": {
+    "isolation": "PostgreSQL READ COMMITTED and existing per-schema/per-repository transaction advisory locks",
+    "clock": "database timestamps and fixed authored fixture timestamps",
+    "fairness": "test lock holders eventually complete or disconnect"
+  },
+  "bounds": {
+    "supported_schema_versions": "3,4",
+    "category_vocabulary_sizes": "5,7",
+    "concurrent_migrators": 2,
+    "concurrent_importers": 2
+  },
+  "invariants": [
+    "runtime accepts valid installed schema3 and4 without writes",
+    "category CHECK literal vocabulary matches installed schema version",
+    "future schemas and ledger/checksum drift remain incompatible",
+    "role/index/column/constraint/environment checks remain enforced",
+    "existing schema4 claim categories remain visible through unfiltered read and show",
+    "application-write-filter-and-transfer-v1 categories remain unchanged",
+    "concurrent migrations apply each asset once",
+    "concurrent exact import retries do not duplicate rows",
+    "catalog publication result categories cover existing schema4 storage without widening any input schema"
+  ],
+  "faults": [
+    "version3 category CHECK widened without migration",
+    "version4 category CHECK narrowed",
+    "unexpected or case-changed category literal",
+    "migration checksum drift",
+    "migration ledger gap",
+    "future migration ledger",
+    "runtime DDL and ledger-write attempts",
+    "concurrent empty-schema migration",
+    "concurrent identical import retries"
+  ],
+  "oracles": [
+    "read-only-transaction enforcement",
+    "migration ledger equality before/after compatibility",
+    "typed compatibility reasons",
+    "PostgreSQL privilege denial",
+    "exact returned publication category",
+    "application input refusal",
+    "transfer validation refusal",
+    "one applied migration sequence and one no-op",
+    "one import row set and one no-op"
+  ],
+  "implementation_anchors": [
+    "kctl/central_schema.py:check_compatibility",
+    "kctl/central_schema.py:_shape_reasons",
+    "kctl/central_schema.py:_constraint_reasons",
+    "tests/test_central_pg_integration.py:test_runtime_compatibility_accepts_declared_schema_without_writes",
+    "tests/test_central_pg_integration.py:test_concurrent_migration_jobs_serialize",
+    "tests/test_central_pg_integration.py:test_concurrent_local_import_retries_apply_once",
+    "kctl/vuoro.py:catalog_operation_specs"
+  ],
+  "expansions": [
+    "concurrent-history",
+    "fault-scenario",
+    "semantic-doc"
+  ]
+}

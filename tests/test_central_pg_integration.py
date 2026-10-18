@@ -23,12 +23,15 @@ from kctl import transfer
 from kctl.application import (
     CentralKnowledgeApplication,
     KnowledgeConflictError,
+    KnowledgeInputError,
     KnowledgeNotFoundError,
     MutationEvidence,
     StaleBasisError,
 )
 from kctl.proposal import proposal_digest
+from kctl.vuoro import catalog_operation_specs
 from kctl.central_schema import (
+    CURRENT_SCHEMA_VERSION,
     EnvironmentBindingError,
     MigrationDriftError,
     check_compatibility,
@@ -122,7 +125,10 @@ def _schema(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:10]}"
 
 
-def _migrate_current(dsn: str, schema: str, environment: str = "vuoro-dev") -> None:
+def _migrate_current(
+    dsn: str, schema: str, environment: str = "vuoro-dev", *,
+    target_version: int = CURRENT_SCHEMA_VERSION,
+) -> None:
     with _connect(dsn, MIGRATION_ROLE) as conn:
         result = migrate(
             conn,
@@ -131,8 +137,143 @@ def _migrate_current(dsn: str, schema: str, environment: str = "vuoro-dev") -> N
             runtime_role=RUNTIME_ROLE,
             environment_name=environment,
             environment_class="development",
+            target_version=target_version,
         )
-    assert result.installed_version == 3
+    assert result.installed_version == target_version
+
+
+@pytest.mark.parametrize("version", [3, 4])
+def test_runtime_compatibility_accepts_declared_schema_without_writes(postgres_dsn, version):
+    schema = _schema(f"knowledge_v{version}")
+    with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
+        migrate(
+            conn, schema=schema, migration_role=MIGRATION_ROLE,
+            runtime_role=RUNTIME_ROLE, environment_name="vuoro-dev",
+            environment_class="development", target_version=version,
+        )
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        with conn.transaction():
+            conn.execute("SET TRANSACTION READ ONLY")
+            before = conn.execute(f'SELECT * FROM "{schema}".schema_migration ORDER BY version').fetchall()
+            result = require_runtime_compatibility(
+                conn, schema=schema, expected_environment_name="vuoro-dev",
+                expected_environment_class="development",
+            )
+            assert result.compatible
+            assert result.installed_schema_version == version
+            assert (result.minimum_schema_version, result.maximum_schema_version) == (3, 4)
+            assert conn.execute(f'SELECT * FROM "{schema}".schema_migration ORDER BY version').fetchall() == before
+
+
+@pytest.mark.parametrize("version, categories", [
+    (3, ["decision", "pattern", "lesson", "risk", "reference", "tenet", "direction"]),
+    (4, ["decision", "pattern", "lesson", "risk", "reference"]),
+    (3, ["decision", "pattern", "lesson", "risk", "reference", "extra"]),
+    (4, ["decision", "pattern", "lesson", "risk", "reference", "tenet", "direction", "extra"]),
+    (3, ["decision", "pattern", "lesson", "risk", "Reference"]),
+])
+def test_runtime_compatibility_rejects_versioned_category_drift(postgres_dsn, version, categories):
+    schema = _schema("knowledge_category_drift")
+    _migrate_current(postgres_dsn, schema, target_version=version)
+    with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
+        conn.execute(
+            f'ALTER TABLE "{schema}".knowledge_publication_reference '
+            'DROP CONSTRAINT knowledge_publication_reference_category_check'
+        )
+        # Values are fixed test literals; DDL only touches this disposable schema.
+        allowed = ", ".join("'" + value + "'" for value in categories)
+        conn.execute(
+            f'ALTER TABLE "{schema}".knowledge_publication_reference '
+            'ADD CONSTRAINT knowledge_publication_reference_category_check '
+            f'CHECK (category IN ({allowed}))'
+        )
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        result = check_compatibility(conn, schema=schema)
+    assert not result.compatible
+    assert "constraint_shape:knowledge_publication_reference.knowledge_publication_reference_category_check" in result.reasons
+
+
+@pytest.mark.parametrize("version", [3, 4])
+@pytest.mark.parametrize("fault", ["checksum", "ledger-gap", "future"])
+def test_runtime_compatibility_keeps_ledger_rejections(postgres_dsn, version, fault):
+    schema = _schema("knowledge_ledger_drift")
+    _migrate_current(postgres_dsn, schema, target_version=version)
+    with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
+        if fault == "checksum":
+            conn.execute(f'UPDATE "{schema}".schema_migration SET sha256 = %s WHERE version = 1', ("0" * 64,))
+            expected = "migration_checksum_mismatch:1"
+        elif fault == "ledger-gap":
+            conn.execute(f'DELETE FROM "{schema}".schema_migration WHERE version = 2')
+            expected = "migration_versions_not_contiguous"
+        else:
+            # A complete future ledger is refused even when table shape is familiar.
+            for next_version in range(version + 1, CURRENT_SCHEMA_VERSION + 2):
+                conn.execute(
+                    f'INSERT INTO "{schema}".schema_migration (version, name, sha256) VALUES (%s, %s, %s)',
+                    (next_version, "future", "0" * 64),
+                )
+            expected = "schema_too_new"
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        result = check_compatibility(conn, schema=schema)
+    assert not result.compatible
+    assert expected in result.reasons
+
+
+@pytest.mark.parametrize("category", ["tenet", "direction"])
+def test_schema_four_existing_claim_categories_are_readable_without_api_widening(
+    postgres_dsn, tmp_path, category,
+):
+    schema = _schema("knowledge_existing_claim")
+    _migrate_current(postgres_dsn, schema)
+    application = _served_application(postgres_dsn, schema)
+    candidate_id = application.intake_candidate(
+        _served_candidate(1), evidence=_evidence(key="intake-claim"),
+    )["candidate"]["candidate_id"]
+    application.approve_candidate(candidate_id=candidate_id, evidence=_evidence(key="approve-claim"))
+    publication = application.record_publication_reference(
+        _served_publication(1, candidate_id), evidence=_evidence(key="publish-claim"),
+    )["publication"]
+    with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
+        with pytest.raises(errors.InsufficientPrivilege):
+            conn.execute(
+                f'UPDATE "{schema}".knowledge_publication_reference SET category = %s WHERE publication_id = %s',
+                (category, publication["publication_id"]),
+            )
+    # Seed existing stored data using the disposable schema owner. Runtime
+    # column grants deliberately do not permit category rewrites.
+    with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
+        conn.execute(
+            f'UPDATE "{schema}".knowledge_publication_reference SET category = %s WHERE publication_id = %s',
+            (category, publication["publication_id"]),
+        )
+    shown = application.show_publication(publication_id=publication["publication_id"])
+    assert shown["publication"]["category"] == category
+    listing = application.list_publications(repo_id="kctl-served")
+    assert listing["publications"][0]["category"] == category
+    specs = {spec["name"]: spec for spec in catalog_operation_specs()}
+    show_schema = specs["knowledge.publication-reference.show"]["result_schema"]["properties"]["publication"]["oneOf"][0]
+    list_schema = specs["knowledge.publication-reference.list"]["result_schema"]["properties"]["publications"]["items"]
+    assert shown["publication"]["category"] in show_schema["properties"]["category"]["enum"]
+    assert listing["publications"][0]["category"] in list_schema["properties"]["category"]["enum"]
+    with pytest.raises(KnowledgeInputError, match="category is unsupported"):
+        application.list_publications(repo_id="kctl-served", category=category)
+    second_id = application.intake_candidate(
+        _served_candidate(2), evidence=_evidence(key="intake-legacy"),
+    )["candidate"]["candidate_id"]
+    application.approve_candidate(candidate_id=second_id, evidence=_evidence(key="approve-legacy"))
+    request = _served_publication(2, second_id)
+    with pytest.raises(KnowledgeInputError, match="category is unsupported"):
+        application.record_publication_reference(
+            {**request, "category": category}, evidence=_evidence(key="refuse-category"),
+        )
+    assert application.record_publication_reference(
+        request, evidence=_evidence(key="publish-legacy"),
+    )["publication"]["category"] == "decision"
+    artifact = _artifact(tmp_path)
+    artifact["publications"][0]["category"] = category
+    artifact["artifact_digest"] = transfer._artifact_digest(artifact)
+    with pytest.raises(transfer.TransferArtifactError, match="publication.category is unsupported"):
+        transfer.validate_artifact(artifact)
 
 
 def _served_application(dsn: str, schema: str) -> CentralKnowledgeApplication:
@@ -321,7 +462,7 @@ def test_empty_upgrade_retry_and_checksum_drift_fail_closed(postgres_dsn: str) -
             environment_name="vuoro-dev",
             environment_class="development",
         )
-        assert upgraded.applied_versions == (2, 3)
+        assert upgraded.applied_versions == tuple(range(2, CURRENT_SCHEMA_VERSION + 1))
         assert repeated.applied_versions == ()
         with conn.cursor() as cur:
             cur.execute(
@@ -422,7 +563,7 @@ def test_version_three_upgrade_preserves_existing_graph_as_unknown_inline_eviden
             )
             rows = cur.fetchall()
 
-    assert upgraded.applied_versions == (3,)
+    assert upgraded.applied_versions == tuple(range(3, CURRENT_SCHEMA_VERSION + 1))
     assert rows[0]["superseded_by"] == publication_ids[1]
     assert rows[1]["superseded_by"] is None
     assert all(row["inline_supersedes"] is None for row in rows)
@@ -456,12 +597,13 @@ def test_concurrent_migration_jobs_serialize(postgres_dsn: str) -> None:
     for thread in threads:
         thread.join(timeout=20)
     assert not failures
-    assert sorted(results, key=len) == [(), (1, 2, 3)]
+    assert sorted(results, key=len) == [(), tuple(range(1, CURRENT_SCHEMA_VERSION + 1))]
 
 
-def test_runtime_role_is_compatible_but_cannot_execute_ddl(postgres_dsn: str) -> None:
+@pytest.mark.parametrize("version", [3, 4])
+def test_runtime_role_is_compatible_but_cannot_execute_ddl(postgres_dsn: str, version) -> None:
     schema = _schema("knowledge_roles")
-    _migrate_current(postgres_dsn, schema)
+    _migrate_current(postgres_dsn, schema, target_version=version)
     with _connect(postgres_dsn, RUNTIME_ROLE) as conn:
         compatibility = require_runtime_compatibility(
             conn,
@@ -480,14 +622,15 @@ def test_runtime_role_is_compatible_but_cannot_execute_ddl(postgres_dsn: str) ->
                 )
 
 
+@pytest.mark.parametrize("version", [3, 4])
 def test_compatibility_rejects_column_constraint_and_index_drift(
-    postgres_dsn: str,
+    postgres_dsn: str, version,
 ) -> None:
     column_schema = _schema("knowledge_column_drift")
     constraint_schema = _schema("knowledge_constraint_drift")
     index_schema = _schema("knowledge_index_drift")
     for schema in (column_schema, constraint_schema, index_schema):
-        _migrate_current(postgres_dsn, schema)
+        _migrate_current(postgres_dsn, schema, target_version=version)
     with _connect(postgres_dsn, MIGRATION_ROLE) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -1174,7 +1317,7 @@ if os.environ.get("KCTL_REAL_VUORO_TESTS") == "1":
                     domains={
                         "knowledge": DomainCompatibility(
                             api_version="knowledge/v1",
-                            schema_version="3",
+                            schema_version=str(CURRENT_SCHEMA_VERSION),
                             state="compatible",
                         )
                     },

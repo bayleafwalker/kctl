@@ -1,0 +1,110 @@
+{
+  "schema_version": "verification-result/v1",
+  "context_id": "kctl.knowledge.central-schema-compatibility",
+  "contract_ref": {
+    "doc_id": "kctl.central-knowledge-workflow",
+    "revision": "sha256:5f41b68817fcaf3492f078e1a1c0c93ed2a917e39bcb200054738276e6d4e2d2"
+  },
+  "implementation_sha": "9310a4b1235969d486c3900656167fa29c368241",
+  "depth": 2,
+  "environment": {
+    "backend": "disposable-PostgreSQL18.6-unix-socket-and-temporary-local-SQLite",
+    "isolation": "PostgreSQL READ COMMITTED; existing per-schema/per-repository transaction advisory locks; separate connections synchronized by thread barriers",
+    "tool_versions": {
+      "postgresql": "18.6",
+      "python": "3.13.16",
+      "pytest": "9.0.2",
+      "psycopg": "3.3.4"
+    }
+  },
+  "execution": {
+    "histories": 32,
+    "bounds": {
+      "supported_schema_versions": "3,4",
+      "category_drift_cases": 5,
+      "ledger_drift_cases": 6,
+      "concurrent_migrators": 2,
+      "concurrent_importers": 2,
+      "full_suite_passed": 255,
+      "full_suite_skipped": 3
+    },
+    "faults_exercised": [
+      "version3 category CHECK widened without migration",
+      "version4 category CHECK narrowed",
+      "unexpected or case-changed category literal",
+      "migration checksum drift",
+      "migration ledger gap",
+      "future migration ledger",
+      "runtime DDL and ledger-write attempts",
+      "concurrent empty-schema migration",
+      "concurrent identical import retries"
+    ]
+  },
+  "claims": [
+    {
+      "property": "valid installed schemas3 and4 pass compatibility without catalog or ledger writes",
+      "result": "example-tested",
+      "evidence": [
+        "tests/test_central_pg_integration.py:test_runtime_compatibility_accepts_declared_schema_without_writes: PostgreSQL SET TRANSACTION READ ONLY and unchanged ledger rows",
+        "independent parent rerun passed both versions"
+      ]
+    },
+    {
+      "property": "category literals follow the installed version while ledger/checksum/future and existing role/shape guards remain enforced",
+      "result": "example-tested",
+      "evidence": [
+        "test_runtime_compatibility_rejects_versioned_category_drift: five mismatched/widened/narrowed/case-changed fixtures",
+        "test_runtime_compatibility_keeps_ledger_rejections: checksum, gap, future cases for versions3 and4",
+        "test_runtime_role_is_compatible_but_cannot_execute_ddl and test_compatibility_rejects_column_constraint_and_index_drift: both versions"
+      ]
+    },
+    {
+      "property": "stored schema4 claim categories are representable in publication responses without widening application writes, filters or transfer-v1",
+      "result": "example-tested",
+      "evidence": [
+        "test_schema_four_existing_claim_categories_are_readable_without_api_widening: actual tenet/direction rows returned by unfiltered list/show match advertised category enums; runtime category UPDATE, new-category write/filter and transfer-v1 refused; legacy decision write accepted",
+        "tests/test_vuoro_knowledge_adapter.py:test_publication_result_categories_cover_storage_without_widening_inputs: publication result objects seven categories, creation/filter inputs five",
+        "executed comparison of prior/current catalog confirms every operation field and input schema unchanged except result_schema; intentional wire hash8835773a56eaae46f61c70997c5d2f99af8ed681d504a688638d0b336608ad06"
+      ]
+    },
+    {
+      "property": "concurrent migration jobs serialize and apply each immutable asset once",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_central_pg_integration.py:test_concurrent_migration_jobs_serialize: two barrier-synchronized independent connections, results empty and versions1-through4"
+      ]
+    },
+    {
+      "property": "concurrent exact import retries establish one row set",
+      "result": "concurrency-tested",
+      "evidence": [
+        "tests/test_central_pg_integration.py:test_concurrent_local_import_retries_apply_once: two barrier-synchronized independent connections each attempt same two-candidate/two-publication snapshot; insert counts0and2"
+      ]
+    },
+    {
+      "property": "complete available suite passes with optional PostgreSQL enabled",
+      "result": "example-tested",
+      "evidence": [
+        "PATH=<cached-PG18.6-bin>:$PATH uv run --frozen --extra dev --extra remote pytest -q --basetemp /var/tmp/kctl-schema-full-read-results-20261018:255passed3skipped in68.37s",
+        "all verification contexts/results and dispatch manifest validate"
+      ]
+    }
+  ],
+  "counterexamples": [
+    {
+      "summary": "Before repair valid schema3 failed compatibility with category constraint_shape; valid schema4 failed with schema_too_new. Both failures reproduced on disposable PostgreSQL18.6.",
+      "trace_ref": "tests/test_central_pg_integration.py:test_runtime_compatibility_accepts_declared_schema_without_writes"
+    },
+    {
+      "summary": "Before result-schema repair catalog publication result enums contained only five categories, excluding existing schema4 tenet/direction rows. New catalog regression failed before the repair.",
+      "trace_ref": "tests/test_vuoro_knowledge_adapter.py:test_publication_result_categories_cover_storage_without_widening_inputs"
+    }
+  ],
+  "notes": [
+    "Depth2 concurrency evidence is bounded to the existing two-connection migration and import histories. Other compatibility and category-contract claims are deterministic examples, not exhaustive semantic SQL verification or distributed-service proof.",
+    "Real PostgreSQL response tests validate the changed category field against advertised enums; no new general JSON-Schema validator dependency or live Vuoro registry/service integration was introduced.",
+    "Initial claim-category fixture attempted a runtime category UPDATE and correctly received InsufficientPrivilege. The corrected fixture explicitly asserts denial and seeds existing rows with the disposable schema owner. Runtime grants are unchanged.",
+    "No migration SQL/checksum, application mutation logic, transfer vocabulary, package pin/version, service deployment, production DDL or shared state changed.",
+    "Packaged migration names/checksums unchanged: [[1, \"candidates_and_reviews\", \"c7f7014b5bf232e1b71f71fd22456aa35d172f2dcc7ac50fd188cf1fcf47a978\"], [2, \"publication_references\", \"3ae2665475651eda17b9c9f2503a1622a65b76e5a9709936f54f6d748a680fff\"], [3, \"publication_inline_supersession_evidence\", \"6d173f8e6e20e92833613d7417506d6ef7cc96e8b6b5b033f2dd340671dbbc8e\"], [4, \"claim_kinds_as_knowledge_categories\", \"54f5b96418f489dd0228a8af93017408c32cff40f87de620f4fc4ed70db51c61\"]]"
+  ]
+}

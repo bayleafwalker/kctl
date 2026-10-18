@@ -69,6 +69,9 @@ _TAGS = {
 _STATUS = {"enum": ["candidate", "approved", "rejected", "published"]}
 _KIND = {"enum": ["durable", "coordination"]}
 _CATEGORY = {"enum": ["decision", "pattern", "lesson", "risk", "reference"]}
+# Results describe existing rows from either supported storage version.
+# Creation and filtering retain their narrower, established input vocabulary.
+_STORED_CATEGORY = {"enum": [*_CATEGORY["enum"], "tenet", "direction"]}
 _REPO_ID = {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"}
 _LIMIT = {"type": "integer", "minimum": 1, "maximum": MAX_READ_LIMIT}
 
@@ -142,7 +145,7 @@ _PUBLICATION_PROPERTIES = {
     "content_anchor": {"type": "string", "minLength": 1},
     "git_revision": _GIT_REVISION,
     "content_digest": _DIGEST,
-    "category": _CATEGORY,
+    "category": _STORED_CATEGORY,
     "source_kind": _KIND,
     "tags": _TAGS,
     "published_at": _TIMESTAMP,
@@ -167,6 +170,7 @@ _PUBLICATION_INPUT_PROPERTIES = {
         "imported_at",
     }
 }
+_PUBLICATION_INPUT_PROPERTIES["category"] = _CATEGORY
 _PUBLICATION_INPUT_PROPERTIES["supersedes_publication_id"] = _NULLABLE_UUID
 _PUBLICATION_INPUT_SCHEMA = {
     "type": "object",

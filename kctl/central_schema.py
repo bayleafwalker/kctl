@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -32,7 +33,7 @@ from .central_migrations import MIGRATION_ASSETS
 
 CURRENT_SCHEMA_VERSION = 4
 MIN_RUNTIME_SCHEMA_VERSION = 3
-MAX_RUNTIME_SCHEMA_VERSION = 3
+MAX_RUNTIME_SCHEMA_VERSION = 4
 DOMAIN_API_VERSION = "knowledge/v1"
 MIGRATION_LOCK_NAMESPACE = "kctl-central-schema"
 ENVIRONMENT_CLASSES = {"development", "production", "recovery"}
@@ -254,8 +255,6 @@ _REQUIRED_CHECK_FRAGMENTS = {
         "'lesson'",
         "'risk'",
         "'reference'",
-        "'tenet'",
-        "'direction'",
     ),
     (
         "knowledge_publication_reference",
@@ -705,7 +704,7 @@ def migrate(
     )
 
 
-def _shape_reasons(conn: Any, schema: str) -> list[str]:
+def _shape_reasons(conn: Any, schema: str, installed_version: int) -> list[str]:
     reasons: list[str] = []
     with conn.cursor() as cur:
         cur.execute(
@@ -746,12 +745,12 @@ def _shape_reasons(conn: Any, schema: str) -> list[str]:
             reasons.append(
                 f"canonical_content_column_forbidden:knowledge_publication_reference.{forbidden}"
             )
-    reasons.extend(_constraint_reasons(conn, schema))
+    reasons.extend(_constraint_reasons(conn, schema, installed_version))
     reasons.extend(_index_reasons(conn, schema))
     return reasons
 
 
-def _constraint_reasons(conn: Any, schema: str) -> list[str]:
+def _constraint_reasons(conn: Any, schema: str, installed_version: int) -> list[str]:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -828,7 +827,7 @@ def _constraint_reasons(conn: Any, schema: str) -> list[str]:
             "validated": bool(values["convalidated"]),
             "deferrable": bool(values["condeferrable"]),
             "deferred": bool(values["condeferred"]),
-            "expression": str(values["expression"] or "").lower(),
+            "expression": str(values["expression"] or ""),
         }
     reasons: list[str] = []
     for key, expected in _REQUIRED_STRUCTURAL_CONSTRAINTS.items():
@@ -858,7 +857,19 @@ def _constraint_reasons(conn: Any, schema: str) -> list[str]:
         if observed is None:
             reasons.append(f"constraint_missing:{key[0]}.{key[1]}")
             continue
-        expression = observed["expression"]
+        expression = observed["expression"].lower()
+        category_drift = False
+        if key == (
+            "knowledge_publication_reference",
+            "knowledge_publication_reference_category_check",
+        ):
+            # Migration 4 widens only the stored category CHECK. Runtime API
+            # and transfer vocabularies remain independently bounded.
+            if installed_version == 4:
+                fragments += ("'tenet'", "'direction'")
+            category_drift = set(re.findall(r"'([^']*)'", observed["expression"])) != {
+                value.strip("'") for value in fragments[1:]
+            }
         if (
             observed["type"] != "c"
             or not observed["validated"]
@@ -866,6 +877,7 @@ def _constraint_reasons(conn: Any, schema: str) -> list[str]:
             or observed["deferred"]
             or any(fragment.lower() not in expression for fragment in fragments)
             or " or true" in expression
+            or category_drift
         ):
             reasons.append(f"constraint_shape:{key[0]}.{key[1]}")
     return reasons
@@ -1122,7 +1134,7 @@ def check_compatibility(
 
     configured: tuple[str, str, str] | None = None
     if MIN_RUNTIME_SCHEMA_VERSION <= installed <= MAX_RUNTIME_SCHEMA_VERSION:
-        reasons.extend(_shape_reasons(conn, schema))
+        reasons.extend(_shape_reasons(conn, schema, installed))
         if "relation_missing:schema_principal" not in reasons:
             configured = _configured_principal(
                 conn, schema=schema, role_kind=expected_role_kind
