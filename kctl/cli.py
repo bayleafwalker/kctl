@@ -160,10 +160,18 @@ def _entry_json(e: dict) -> dict:
     }
 
 
-@click.group()
+RETIRED_NOTICE = (
+    "kctl is retired (estate plan EE-07, 2026-11-07): historical migration input only. "
+    "Use the Vuoro workspace and vuoro-knowledge for new knowledge work."
+)
+
+
+@click.group(help="Knowledge pipeline CLI (retired).\n\n" + RETIRED_NOTICE)
 @click.pass_context
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
+    if sys.stderr.isatty():
+        click.secho(f"warning: {RETIRED_NOTICE}", err=True, fg="yellow")
     mode = os.environ.get("SPRINTCTL_BACKEND", "local").lower()
     if mode == "served":
         disposition = SERVED_COMMAND_DISPOSITIONS[ctx.invoked_subcommand]
