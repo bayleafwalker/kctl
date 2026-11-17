@@ -171,7 +171,8 @@ RETIRED_NOTICE = (
 def cli(ctx: click.Context) -> None:
     ctx.ensure_object(dict)
     if sys.stderr.isatty():
-        click.secho(f"warning: {RETIRED_NOTICE}", err=True, fg="yellow")
+        color = None if not os.environ.get("NO_COLOR") else False
+        click.secho(f"warning: {RETIRED_NOTICE}", err=True, fg="yellow", color=color)
     mode = os.environ.get("SPRINTCTL_BACKEND", "local").lower()
     if mode == "served":
         disposition = SERVED_COMMAND_DISPOSITIONS[ctx.invoked_subcommand]
